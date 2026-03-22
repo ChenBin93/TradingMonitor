@@ -242,6 +242,7 @@ class RealtimeScanner:
         for symbol in self._symbols:
             for tf in self._timeframes:
                 candles = self._cache.get_all(symbol, tf)
+                candles = self._drop_incomplete(candles, tf)
                 if len(candles) < 30:
                     continue
                 df = self._candles_to_df(candles)
@@ -295,6 +296,12 @@ class RealtimeScanner:
                 lines.append(self._fmt_alert(a))
 
         self._feishu_client.send_message("\n".join(lines))
+
+    def _drop_incomplete(self, candles: list[CandleData], timeframe: str) -> list[CandleData]:
+        now = datetime.now()
+        secs = {"15m": 900, "1h": 3600, "4h": 14400}.get(timeframe, 900)
+        complete = [c for c in candles if (now - c.timestamp).total_seconds() > secs * 0.9]
+        return complete if complete else candles
 
     def _candles_to_df(self, candles: list[CandleData]) -> pd.DataFrame:
         data = [{
