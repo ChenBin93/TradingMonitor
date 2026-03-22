@@ -287,17 +287,17 @@ class RealtimeScanner:
         logger.info(f"Filter: {len(alerts)} alerts -> {len(to_push)} to_push")
 
         time_str = scan_time.strftime("%Y-%m-%d %H:%M")
-        lines = [f"📡 OKX实时监控 [{time_str}]"]
+        lines = [f"📊 OKX实时监控 [{time_str}]"]
 
         critical = [a for a in to_push if a.severity == "critical"]
         high = [a for a in to_push if a.severity == "high"]
 
         if critical:
-            lines.append(f"\n🔴 严重预警 ({len(critical)}):")
+            lines.append(f"\n🔴 强烈信号 ({len(critical)}):")
             for a in critical:
                 lines.append(self._fmt_alert(a))
         if high:
-            lines.append(f"\n🟠 高级预警 ({len(high)}):")
+            lines.append(f"\n🟠 准备信号 ({len(high)}):")
             for a in high:
                 lines.append(self._fmt_alert(a))
 
@@ -368,6 +368,41 @@ class RealtimeScanner:
             vol_rank = self.history_manager.get_volatility_squeeze_rank(symbol, tf, lookback)
             if vol_rank < 25:
                 boost += 0.07
+
+        elif alert.signal_type == "ttm_squeeze":
+            details = alert.details or {}
+            squeeze_bars = details.get("squeeze_bars", 0)
+            is_fired = details.get("is_fired", False)
+            if is_fired:
+                boost += 0.15
+            elif squeeze_bars >= 8:
+                boost += 0.12
+            elif squeeze_bars >= 5:
+                boost += 0.08
+
+        elif alert.signal_type == "rsi_divergence":
+            details = alert.details or {}
+            price_dist = details.get("price_distance_pct", 0)
+            if price_dist >= 5:
+                boost += 0.15
+            elif price_dist >= 3:
+                boost += 0.10
+
+        elif alert.signal_type == "macd_divergence":
+            details = alert.details or {}
+            price_dist = details.get("price_distance_pct", 0)
+            if price_dist >= 5:
+                boost += 0.12
+            elif price_dist >= 3:
+                boost += 0.08
+
+        elif alert.signal_type == "volume_breakout":
+            details = alert.details or {}
+            vol_ratio = details.get("vol_ratio", 0)
+            if vol_ratio >= 3:
+                boost += 0.12
+            elif vol_ratio >= 2:
+                boost += 0.08
 
         return min(base + boost, 1.0)
 
@@ -475,34 +510,186 @@ class RealtimeScanner:
                 timestamp=datetime.now(),
             ))
 
+        ttm_squeeze = ind_data.get("ttm_squeeze")
+        if ttm_squeeze:
+            squeeze_bars = ttm_squeeze.get("squeeze_bars", 0)
+            is_fired = ttm_squeeze.get("is_fired", False)
+            squeeze_dir = ttm_squeeze.get("direction")
+            if squeeze_bars >= 3 or is_fired:
+                conf = 0.75 if is_fired else 0.65
+                alerts.append(RealtimeAlert(
+                    symbol=symbol,
+                    timeframe=tf,
+                    signal_type="ttm_squeeze",
+                    regime=regime,
+                    direction=squeeze_dir or direction,
+                    severity="critical" if squeeze_bars >= 8 or is_fired else "high",
+                    confidence=conf,
+                    details={
+                        "squeeze_bars": squeeze_bars,
+                        "is_fired": is_fired,
+                        "direction": squeeze_dir,
+                    },
+                    timestamp=datetime.now(),
+                ))
+
+        rsi_div = ind_data.get("rsi_divergence")
+        if rsi_div and rsi_div.get("divergence"):
+            div = rsi_div.get("divergence")
+            price_dist = rsi_div.get("price_distance_pct", 0)
+            alerts.append(RealtimeAlert(
+                symbol=symbol,
+                timeframe=tf,
+                signal_type="rsi_divergence",
+                regime=regime,
+                direction="long" if div == "bullish" else "short",
+                severity="critical" if price_dist >= 5 else "high",
+                confidence=0.8,
+                details={
+                    "divergence": div,
+                    "rsi_value": rsi_div.get("rsi_value"),
+                    "price_distance_pct": price_dist,
+                },
+                timestamp=datetime.now(),
+            ))
+
+        macd_div = ind_data.get("macd_divergence")
+        if macd_div and macd_div.get("divergence"):
+            div = macd_div.get("divergence")
+            price_dist = macd_div.get("price_distance_pct", 0)
+            alerts.append(RealtimeAlert(
+                symbol=symbol,
+                timeframe=tf,
+                signal_type="macd_divergence",
+                regime=regime,
+                direction="long" if div == "bullish" else "short",
+                severity="critical" if price_dist >= 5 else "high",
+                confidence=0.75,
+                details={
+                    "divergence": div,
+                    "macd_value": macd_div.get("macd_value"),
+                    "price_distance_pct": price_dist,
+                },
+                timestamp=datetime.now(),
+            ))
+
+        vol_breakout = ind_data.get("volume_breakout")
+        if vol_breakout and vol_breakout.get("confirmed"):
+            vol_ratio_break = vol_breakout.get("vol_ratio", 0)
+            price_chg = vol_breakout.get("price_change_pct", 0)
+            alerts.append(RealtimeAlert(
+                symbol=symbol,
+                timeframe=tf,
+                signal_type="volume_breakout",
+                regime=regime,
+                direction=direction,
+                severity="critical" if vol_ratio_break >= 3 else "high",
+                confidence=min(0.7 + (vol_ratio_break - 1.5) * 0.15, 0.95),
+                details={
+                    "vol_ratio": vol_ratio_break,
+                    "price_change_pct": price_chg,
+                    "is_expansion": vol_breakout.get("is_expansion"),
+                },
+                timestamp=datetime.now(),
+            ))
+
         return alerts
 
     def _fmt_alert(self, a: RealtimeAlert) -> str:
         sym = a.symbol.replace("-USDT-SWAP", "/USDT")
         conf = a.confidence
         d = a.details or {}
-        if a.signal_type == "rsi_extreme":
-            detail = f" RSI:{d.get('rsi', 0):.0f}"
-        elif a.signal_type == "bb_width_squeeze":
-            rank = d.get('bbw_rank', 0)
-            detail = f" BB压缩位:{rank:.0f}%"
-        elif a.signal_type == "ma_converge":
-            detail = f" MA汇聚:{d.get('ma_converge', 0):.2f}"
-        elif a.signal_type == "macd_cross":
-            tag = "金叉" if d.get("macd_cross") == "golden" else "死叉"
-            detail = f" MACD{tag}"
-        elif a.signal_type == "volume_spike":
-            detail = f" 量:{d.get('volume_ratio', 0):.1f}x"
-        else:
-            detail = ""
-        sig_tag = {
-            "bb_width_squeeze": "BB收窄",
+
+        dir_icon = "🟢" if a.direction == "long" else "🔴" if a.direction == "short" else "⚪"
+        dir_text = "多头" if a.direction == "long" else "空头" if a.direction == "short" else "中性"
+        regime_text = "趋势" if a.regime == "trend" else "震荡"
+
+        sig_name = self._get_signal_name(a.signal_type)
+        evidence = self._get_evidence(a)
+
+        hist_bar = self._get_histogram(a)
+
+        lines = [
+            f"{sym}[{a.timeframe}] {dir_icon}{dir_text} {sig_name}",
+            f"━━━━━━━━━━━━━━━━━━━━",
+            f"方向: {dir_text} | 状态: {regime_text}市场",
+            f"信号: {evidence}",
+            f"历史: {hist_bar}",
+            f"置信: {conf:.0%}",
+        ]
+        return "\n  ".join(lines)
+
+    def _get_signal_name(self, sig_type: str) -> str:
+        names = {
+            "bb_width_squeeze": "BB压缩",
             "ma_converge": "MA汇聚",
             "rsi_extreme": "RSI极值",
-            "macd_cross": "MACD",
-            "volume_spike": "量能",
-        }.get(a.signal_type, a.signal_type)
-        return f"  {sym}[{a.timeframe}] {sig_tag}{detail} 置信:{conf:.0%}"
+            "macd_cross": "MACD交叉",
+            "volume_spike": "量能爆发",
+            "ttm_squeeze": "TTM压缩",
+            "rsi_divergence": "RSI背离",
+            "macd_divergence": "MACD背离",
+            "volume_breakout": "量价突破",
+        }
+        return names.get(sig_type, sig_type)
+
+    def _get_evidence(self, a: RealtimeAlert) -> str:
+        d = a.details or {}
+        parts = []
+
+        if a.signal_type == "bb_width_squeeze":
+            rank = d.get("bbw_rank", 0)
+            parts.append(f"压缩位{int(rank)}%")
+        elif a.signal_type == "rsi_extreme":
+            rsi = d.get("rsi", 50)
+            parts.append(f"RSI={rsi:.0f}")
+        elif a.signal_type == "macd_cross":
+            tag = "金叉" if d.get("macd_cross") == "golden" else "死叉"
+            parts.append(f"MACD{tag}")
+        elif a.signal_type == "volume_spike":
+            vol = d.get("volume_ratio", 0)
+            parts.append(f"量{vol:.1f}x")
+        elif a.signal_type == "ttm_squeeze":
+            bars = d.get("squeeze_bars", 0)
+            fired = d.get("is_fired", False)
+            parts.append(f"压缩{bars}根{'【释放】' if fired else ''}")
+        elif a.signal_type == "rsi_divergence":
+            div = d.get("divergence", "")
+            price_dist = d.get("price_distance_pct", 0)
+            parts.append(f"{'底背离' if div == 'bullish' else '顶背离'} {price_dist:.1f}%")
+        elif a.signal_type == "macd_divergence":
+            div = d.get("divergence", "")
+            price_dist = d.get("price_distance_pct", 0)
+            parts.append(f"{'底背离' if div == 'bullish' else '顶背离'} {price_dist:.1f}%")
+        elif a.signal_type == "volume_breakout":
+            vol = d.get("vol_ratio", 0)
+            price_chg = d.get("price_change_pct", 0)
+            parts.append(f"量{vol:.1f}x | 涨跌{price_chg:.1f}%")
+
+        return " | ".join(parts) if parts else "综合信号"
+
+    def _get_histogram(self, a: RealtimeAlert) -> str:
+        d = a.details or {}
+
+        if a.signal_type == "bb_width_squeeze":
+            rank = d.get("bbw_rank", 50)
+            bar = "█" * int(rank // 5) + "░" * (20 - int(rank // 5))
+            label = "极度压缩" if rank <= 10 else "高度压缩" if rank <= 20 else "中度压缩"
+            return f"BB {rank:.0f}% {bar} [{label}]"
+        elif a.signal_type == "volume_spike":
+            vol = d.get("volume_ratio", 1)
+            bar = "█" * min(int(vol), 10) + "░" * (10 - min(int(vol), 10))
+            return f"量 {vol:.1f}x {bar}"
+        elif a.signal_type == "rsi_divergence" or a.signal_type == "macd_divergence":
+            dist = d.get("price_distance_pct", 0)
+            bar = "█" * min(int(dist // 2), 10) + "░" * (10 - min(int(dist // 2), 10))
+            return f"背离 {dist:.1f}% {bar}"
+        elif a.signal_type == "ttm_squeeze":
+            bars = d.get("squeeze_bars", 0)
+            bar = "█" * min(int(bars), 10) + "░" * (10 - min(int(bars), 10))
+            return f"TTM {bars}根 {bar}"
+        else:
+            return ""
 
     def _get_direction(self, ind_data: dict) -> str:
         plus_di = ind_data.get("plus_di", 0) or 0
