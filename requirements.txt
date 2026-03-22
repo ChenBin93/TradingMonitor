@@ -4,3 +4,6 @@ ccxt
 schedule
 requests
 lark-oapi
+loguru
+pydantic
+pydantic-settings

@@ -21,6 +21,7 @@ data:
       1h: 90
       4h: 365
     short_window: 20
+    lookback_days: [90, 180, 365]
   timeframes:
   - 15m
   - 1h

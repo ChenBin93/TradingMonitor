@@ -131,8 +131,9 @@ class RealtimeAlert:
 
 
 class RealtimeScanner:
-    def __init__(self, config: dict[str, Any]):
+    def __init__(self, config: dict[str, Any], history_manager=None):
         self.config = config
+        self.history_manager = history_manager
         self._shutdown = False
         self._symbols: list[str] = []
         self._timeframes: list[str] = config.get("data", {}).get("timeframes", ["15m", "1h", "4h"])
@@ -249,6 +250,8 @@ class RealtimeScanner:
                 if not ind_data:
                     continue
                 sigs = self._check_signals(symbol, tf, ind_data)
+                for sig in sigs:
+                    sig.confidence = self._score_with_history(sig, ind_data)
                 alerts.extend(sigs)
         for alert in alerts:
             for callback in self._callbacks:
@@ -321,6 +324,42 @@ class RealtimeScanner:
             "ma_mid": ind_cfg.get("ma", {}).get("mid", 20),
             "ma_long": ind_cfg.get("ma", {}).get("long", 60),
         }
+
+    def _score_with_history(self, alert: RealtimeAlert, ind_data: dict) -> float:
+        base = alert.confidence
+        if not self.history_manager:
+            return base
+
+        symbol = alert.symbol
+        tf = alert.timeframe
+        lookback = self.config.get("data", {}).get("history", {}).get("default_lookback", 90)
+        boost = 0.0
+
+        vol_rank = self.history_manager.get_volatility_squeeze_rank(symbol, tf, lookback)
+
+        if alert.signal_type == "bb_width_squeeze":
+            if vol_rank < 20:
+                boost += 0.10
+            elif vol_rank < 35:
+                boost += 0.05
+
+        elif alert.signal_type == "volume_spike":
+            vol_short_rank = self.history_manager.get_percentile_rank(
+                symbol, tf, lookback, "volume", "short", 0
+            )
+            if vol_short_rank > 80:
+                boost += 0.08
+
+        elif alert.signal_type == "rsi_extreme":
+            rsi = ind_data.get("rsi") or 50
+            if rsi <= 25 or rsi >= 75:
+                boost += 0.05
+
+        elif alert.signal_type == "ma_converge":
+            if vol_rank < 25:
+                boost += 0.07
+
+        return min(base + boost, 1.0)
 
     def _check_signals(self, symbol: str, tf: str, ind_data: dict) -> list[RealtimeAlert]:
         alerts = []

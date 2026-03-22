@@ -29,6 +29,7 @@ class DataConfig(BaseModel):
         "long_window": 240,
         "download_batch_size": 50,
         "download_interval_seconds": 60,
+        "lookback_days": [90, 180, 365],
     })
 
 
