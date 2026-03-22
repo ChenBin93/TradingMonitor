@@ -1,0 +1,113 @@
+alerts:
+  dedup:
+    stage1_volatile_window_minutes: 60
+    window_minutes: 30
+  ranking:
+    long_top_n: 20
+    short_top_n: 10
+    weights:
+      15m: 0.4
+      1h: 0.3
+      4h: 0.3
+  summary_level: extended
+data:
+  history:
+    download_batch_size: 50
+    download_interval_seconds: 60
+    long_window: 240
+    medium_window: 60
+    retention_days:
+      15m: 90
+      1h: 90
+      4h: 365
+    short_window: 20
+  timeframes:
+  - 15m
+  - 1h
+  - 4h
+  top_n: 100
+  websocket:
+    enabled: true
+    max_reconnect_attempts: 10
+    ping_interval_seconds: 30
+    reconnect_delay_seconds: 5
+database:
+  path: data/screening.db
+  retention:
+    alerts_days: 180
+    snapshots_days: 90
+exchange:
+  enabled: true
+  name: okx
+  quote_currency: USDT
+  type: swap
+feishu:
+  allow_commands: true
+  app_id: ''
+  app_secret: ''
+  chat_id: ''
+  enabled: true
+  long_connection: true
+  silent_hours: []
+  stage1_enabled: true
+  stage2_enabled: true
+  webhook_url: ''
+
+position_alert:
+  pnl_loss_pct: 5.0
+  pnl_profit_pct: 10.0
+  signal_match: true
+  interval_seconds: 60
+
+okx_credentials:
+  api_key: ''
+  api_secret: ''
+  passphrase: ''
+  testnet: false
+health:
+  enabled: true
+  endpoint: /health
+  port: 8080
+indicators:
+  adx:
+    entry_threshold: 25
+    period: 14
+    strong_trend: 40
+    trend_threshold: 20
+  atr_period: 14
+  bb:
+    period: 20
+    std: 2
+  ma:
+    long: 60
+    mid: 20
+    short: 5
+  macd:
+    bars_confirm: 3
+    fast: 12
+    signal: 9
+    slow: 26
+  roc_periods:
+    15m: 5
+    1h: 10
+    4h: 20
+  rsi:
+    overbot: 65
+    oversold: 35
+    period: 14
+  volume_ma_period: 20
+logging:
+  console: true
+  file: logs/screening.log
+  level: INFO
+  rotation:
+    backup_count: 5
+    max_size_mb: 100
+scanner:
+  historical_bars: 200
+  interval_seconds: 60
+  symbol_refresh_interval: 12
+signals:
+  config_file: configs/signals.yaml
+  regime:
+    adx_threshold: 20

@@ -1,0 +1,419 @@
+# =============================================================================
+# Signal Definitions - YAML Configuration
+# =============================================================================
+# This file defines all signals that can be monitored.
+# Add, modify, or remove signals here without touching the code.
+
+signals:
+  # ===========================================================================
+  # Stage 1: Trend Accumulation Signals
+  # ===========================================================================
+  
+  - id: "bb_width_squeeze"
+    name: "波动率压缩"
+    name_en: "BB Width Squeeze"
+    stage: 1
+    category: "trend_accumulation"
+    description: "布林带收窄至历史低位，暗示潜在突破"
+    
+    # Market regime applicability
+    regimes:
+      - "trend"      # Can trigger in both regimes
+      - "range"
+    
+    # Parameters
+    params:
+      bb_width_pct_threshold: 20
+      lookback: 20
+    
+    # Severity calculation
+    severity:
+      critical: 10      # bb_pct <= 10
+      high: 20          # bb_pct <= 20
+      medium: 30        # bb_pct <= 30
+      low: 100
+    
+    # Direction inference
+    direction_from: "trend_direction"  # Use trend_direction from ADX
+    
+    # Confidence scoring weights
+    confidence:
+      regime_match: 0.3      # Matches current regime
+      severity: 0.2         # Higher severity = higher confidence
+      volume_confirmation: 0.2  # Volume ratio > 1
+      multi_timeframe: 0.3   # Confirmed across timeframes
+
+  - id: "ma_converge"
+    name: "均线收敛"
+    name_en: "MA Convergence"
+    stage: 1
+    category: "trend_accumulation"
+    description: "多条均线收敛，暗示盘整结束"
+    
+    regimes:
+      - "trend"
+      - "range"
+    
+    params:
+      converge_threshold: 0.5  # × ATR
+      atr_multiplier: 3
+    
+    severity:
+      critical: 0.3
+      high: 0.5
+      medium: 1.0
+      low: 2.0
+    
+    direction_from: "trend_direction"
+    
+    confidence:
+      regime_match: 0.25
+      severity: 0.25
+      volume_confirmation: 0.25
+      historical_support: 0.25
+
+  - id: "volume_contraction"
+    name: "缩量整理"
+    name_en: "Volume Contraction"
+    stage: 1
+    category: "trend_accumulation"
+    description: "成交量萎缩且价格波动减小"
+    
+    regimes:
+      - "trend"
+      - "range"
+    
+    params:
+      volume_threshold: 0.5
+      price_fluctuation_max: 0.5  # × ATR
+    
+    severity:
+      medium: 1.0  # Always medium severity
+      low: 10.0
+    
+    direction_from: "trend_direction"
+    
+    confidence:
+      regime_match: 0.2
+      duration: 0.3
+      volume_confirmation: 0.3
+      price_stability: 0.2
+
+  - id: "adx_retrace"
+    name: "ADX回落"
+    name_en: "ADX Retracement"
+    stage: 1
+    category: "trend_accumulation"
+    description: "ADX从高位回落，趋势可能转为震荡"
+    
+    regimes:
+      - "range"  # Only meaningful in range
+    
+    params:
+      peak_from: 40
+      retrace_to: 20
+    
+    severity:
+      medium: 1.0
+      low: 10.0
+    
+    direction_from: "inverse_trend"  # ADX dropping means range is coming
+    
+    confidence:
+      regime_match: 0.4
+      retrace_depth: 0.3
+      rsi_neutral: 0.3
+
+  - id: "consolidation"
+    name: "窄幅盘整"
+    name_en: "Consolidation"
+    stage: 1
+    category: "trend_accumulation"
+    description: "价格在一段时间内波动极小"
+    
+    regimes:
+      - "trend"
+      - "range"
+    
+    params:
+      consolidation_bars: 20
+      consolidation_range: 3.0  # × ATR
+    
+    severity:
+      critical: 2.0   # range_atr <= 2
+      high: 3.0       # range_atr <= 3
+      medium: 5.0     # range_atr <= 5
+      low: 100.0
+    
+    direction_from: "trend_direction"
+    
+    confidence:
+      regime_match: 0.2
+      consolidation_tightness: 0.3
+      duration: 0.25
+      volume_confirmation: 0.25
+
+  - id: "volume_spike"
+    name: "成交量爆发"
+    name_en: "Volume Spike"
+    stage: 1
+    category: "trend_accumulation"
+    description: "成交量急剧放大，可能预示突破"
+    
+    regimes:
+      - "trend"
+    
+    params:
+      volume_spike_threshold: 5.0
+    
+    severity:
+      critical: 10.0  # Always high severity
+      high: 5.0
+      medium: 3.0
+    
+    direction_from: "trend_direction"
+    
+    confidence:
+      regime_match: 0.2
+      spike_magnitude: 0.4
+      breakout_confirmation: 0.4
+
+  # ===========================================================================
+  # Stage 1: Range Extremes Signals
+  # ===========================================================================
+  
+  - id: "rsi_extreme"
+    name: "RSI极值"
+    name_en: "RSI Extreme"
+    stage: 1
+    category: "range_extremes"
+    description: "RSI达到超买超卖区域"
+    
+    regimes:
+      - "range"  # More relevant in range
+    
+    params:
+      oversold: 35
+      overbot: 65
+    
+    severity:
+      critical: 30      # RSI <= 20 or >= 80
+      high: 35         # RSI <= 30 or >= 70
+      medium: 100      # RSI <= 35 or >= 65
+    
+    direction_from: "rsi_direction"  # oversold = long, overbot = short
+    
+    confidence:
+      regime_match: 0.3
+      extreme_level: 0.4
+      divergence: 0.3  # Price vs RSI divergence
+
+  - id: "price_deviation"
+    name: "价格偏离"
+    name_en: "Price Deviation"
+    stage: 1
+    category: "range_extremes"
+    description: "价格偏离均线过远，可能均值回归"
+    
+    regimes:
+      - "range"
+    
+    params:
+      deviation_threshold: 3.0  # × ATR
+    
+    severity:
+      high: 4.0
+      medium: 3.0
+      low: 2.0
+    
+    direction_from: "mean_reversion"  # Above MA = short, below = long
+    
+    confidence:
+      regime_match: 0.3
+      deviation_magnitude: 0.4
+      historical_reversion_rate: 0.3
+
+  # ===========================================================================
+  # Stage 1: Momentum Change Signals
+  # ===========================================================================
+  
+  - id: "roc_turn"
+    name: "ROC转折"
+    name_en: "ROC Turning"
+    stage: 1
+    category: "momentum_change"
+    description: "ROC从负转正或从正转负"
+    
+    regimes:
+      - "trend"
+    
+    params:
+      min_roc_change: 0.5
+    
+    severity:
+      medium: 1.0
+      low: 10.0
+    
+    direction_from: "roc_direction"
+    
+    confidence:
+      regime_match: 0.2
+      momentum_acceleration: 0.4
+      volume_confirmation: 0.2
+      multi_timeframe: 0.2
+
+  - id: "macd_momentum"
+    name: "MACD动能"
+    name_en: "MACD Momentum"
+    stage: 1
+    category: "momentum_change"
+    description: "MACD柱连续放大，暗示动能增强"
+    
+    regimes:
+      - "trend"
+    
+    params:
+      bars_confirm: 3
+      min_histogram_change: 0.0001
+    
+    severity:
+      medium: 1.0
+      low: 10.0
+    
+    direction_from: "macd_direction"
+    
+    confidence:
+      regime_match: 0.2
+      momentum_persistence: 0.3
+      histogram_magnitude: 0.3
+      volume_confirmation: 0.2
+
+  # ===========================================================================
+  # Stage 2: Trend Entry Signals
+  # ===========================================================================
+  
+  - id: "trend_breakout_long"
+    name: "趋势突破做多"
+    name_en: "Trend Breakout Long"
+    stage: 2
+    category: "trend_entry"
+    description: "趋势确认后的突破做多信号"
+    
+    regimes:
+      - "trend"
+    
+    params:
+      adx_entry_threshold: 25
+      adx_1h_threshold: 20
+      roc_entry_short: 0.5
+      roc_entry_mid: 1.0
+      volume_multiplier: 2.0
+      stop_loss_atr: 2.0
+      risk_reward: 2.0
+    
+    direction: "long"
+    
+    entry_conditions:
+      - "adx_15m >= 25"
+      - "adx_1h >= 20"
+      - "plus_di > minus_di"
+      - "roc_15m >= 0.5 OR roc_1h >= 1.0"
+      - "volume_ratio >= 2.0"
+    
+    confidence:
+      adx_strength: 0.25
+      volume_confirmation: 0.25
+      roc_momentum: 0.25
+      multi_timeframe: 0.25
+
+  - id: "trend_breakout_short"
+    name: "趋势突破做空"
+    name_en: "Trend Breakout Short"
+    stage: 2
+    category: "trend_entry"
+    description: "趋势确认后的突破做空信号"
+    
+    regimes:
+      - "trend"
+    
+    params:
+      adx_entry_threshold: 25
+      adx_1h_threshold: 20
+      roc_entry_short: -0.5
+      roc_entry_mid: -1.0
+      volume_multiplier: 2.0
+      stop_loss_atr: 2.0
+      risk_reward: 2.0
+    
+    direction: "short"
+    
+    entry_conditions:
+      - "adx_15m >= 25"
+      - "adx_1h >= 20"
+      - "minus_di > plus_di"
+      - "roc_15m <= -0.5 OR roc_1h <= -1.0"
+      - "volume_ratio >= 2.0"
+    
+    confidence:
+      adx_strength: 0.25
+      volume_confirmation: 0.25
+      roc_momentum: 0.25
+      multi_timeframe: 0.25
+
+  # ===========================================================================
+  # Stage 2: Range Entry Signals
+  # ===========================================================================
+  
+  - id: "range_reversion_long"
+    name: "震荡反弹做多"
+    name_en: "Range Reversion Long"
+    stage: 2
+    category: "range_entry"
+    description: "震荡市场中的反弹做多信号"
+    
+    regimes:
+      - "range"
+    
+    params:
+      adx_max: 20
+      rsi_rebound_from: 35
+      stop_loss_atr: 1.5
+      risk_reward: 2.0
+    
+    direction: "long"
+    
+    entry_conditions:
+      - "adx_15m < 20 AND adx_1h < 20"
+      - "rsi <= 35"
+    
+    confidence:
+      rsi_extreme: 0.4
+      regime_confirmation: 0.3
+      volume_confirmation: 0.3
+
+  - id: "range_reversion_short"
+    name: "震荡回调做空"
+    name_en: "Range Reversion Short"
+    stage: 2
+    category: "range_entry"
+    description: "震荡市场中的回调做空信号"
+    
+    regimes:
+      - "range"
+    
+    params:
+      adx_max: 20
+      rsi_rebound_from: 65
+      stop_loss_atr: 1.5
+      risk_reward: 2.0
+    
+    direction: "short"
+    
+    entry_conditions:
+      - "adx_15m < 20 AND adx_1h < 20"
+      - "rsi >= 65"
+    
+    confidence:
+      rsi_extreme: 0.4
+      regime_confirmation: 0.3
+      volume_confirmation: 0.3
