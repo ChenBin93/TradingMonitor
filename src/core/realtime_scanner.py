@@ -6,7 +6,10 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Callable, Optional
+from typing import TYPE_CHECKING, Any, Callable, Optional
+
+if TYPE_CHECKING:
+    from src.core.realtime_scanner import RealtimeAlert
 
 import pandas as pd
 from loguru import logger
@@ -117,6 +120,150 @@ class AlertFilter:
 
 
 @dataclass
+class SymbolRanking:
+    symbol: str
+    direction: str
+    regime: str
+    score: float
+    confidence: float
+    signal_types: list[str]
+    momentum_score: float
+    compression_score: float
+    volume_score: float
+    history_score: float
+    details: dict
+
+
+class SymbolRanker:
+    WEIGHTS = {
+        "signal_strength": 0.25,
+        "momentum": 0.20,
+        "compression": 0.20,
+        "volume": 0.15,
+        "history": 0.10,
+        "relative_strength": 0.10,
+    }
+
+    def __init__(self, history_manager=None, config: dict | None = None):
+        self.history_manager = history_manager
+        self.config = config or {}
+        self._btc_symbols: set[str] = set()
+
+    def rank_symbols(
+        self, alerts: "list[RealtimeAlert]", ind_data_map: dict
+    ) -> tuple:
+        symbol_scores: dict[str, dict] = {}
+
+        for alert in alerts:
+            sym = alert.symbol
+            if sym not in symbol_scores:
+                symbol_scores[sym] = {
+                    "direction": alert.direction,
+                    "regime": alert.regime,
+                    "signals": [],
+                    "max_confidence": 0,
+                    "max_severity": "low",
+                    "momentum_score": 0,
+                    "compression_score": 0,
+                    "volume_score": 0,
+                    "history_score": 0,
+                    "details": {},
+                }
+            score = symbol_scores[sym]
+            score["signals"].append(alert.signal_type)
+            score["max_confidence"] = max(score["max_confidence"], alert.confidence)
+            severity_order = {"critical": 3, "high": 2, "medium": 1, "low": 0}
+            if severity_order.get(alert.severity, 0) > severity_order.get(score["max_severity"], 0):
+                score["max_severity"] = alert.severity
+            ind_data = ind_data_map.get(sym, {})
+            self._update_dimension_scores(score, alert, ind_data)
+
+        rankings = []
+        for sym, score in symbol_scores.items():
+            if not score["signals"]:
+                continue
+            total = self._calculate_total_score(score)
+            rankings.append(
+                SymbolRanking(
+                    symbol=sym,
+                    direction=score["direction"],
+                    regime=score["regime"],
+                    score=total,
+                    confidence=score["max_confidence"],
+                    signal_types=score["signals"],
+                    momentum_score=score["momentum_score"],
+                    compression_score=score["compression_score"],
+                    volume_score=score["volume_score"],
+                    history_score=score["history_score"],
+                    details=score["details"],
+                )
+            )
+
+        rankings.sort(key=lambda x: x.score, reverse=True)
+        trending = [r for r in rankings if r.regime == "trend"][:5]
+        consolidating = [r for r in rankings if r.regime == "range"][:5]
+
+        if len(trending) < 5:
+            trending = rankings[: 5 - len(trending) + len(trending)]
+        if len(consolidating) < 5:
+            consolidating = [r for r in rankings if r not in trending][:5]
+
+        return trending, consolidating
+
+    def _update_dimension_scores(self, score: dict, alert: "RealtimeAlert", ind_data: dict):
+        d = alert.details or {}
+        self._btc_symbols.add("BTC/USDT")
+
+        if alert.signal_type in ("bb_width_squeeze", "ttm_squeeze"):
+            bb_rank = d.get("bbw_rank", 50)
+            if isinstance(bb_rank, (int, float)) and bb_rank > 0:
+                score["compression_score"] = max(score["compression_score"], (100 - bb_rank) / 100)
+                score["details"]["bb_rank"] = bb_rank
+
+        if alert.signal_type in ("volume_spike", "volume_breakout"):
+            vol_ratio = d.get("volume_ratio", d.get("vol_ratio", 1))
+            score["volume_score"] = max(score["volume_score"], min(vol_ratio / 3, 1))
+            score["details"]["vol_ratio"] = vol_ratio
+
+        if alert.signal_type in ("rsi_divergence", "macd_divergence"):
+            dist = d.get("price_distance_pct", 0)
+            score["compression_score"] = max(score["compression_score"], min(dist / 5, 1) * 0.8)
+
+        rsi = ind_data.get("rsi")
+        if rsi:
+            rsi_score = abs(rsi - 50) / 50
+            score["details"]["rsi"] = rsi
+
+        adx = ind_data.get("adx")
+        if adx:
+            adx_score = min(adx / 40, 1)
+            score["momentum_score"] = max(score["momentum_score"], adx_score)
+            score["details"]["adx"] = adx
+
+        roc = ind_data.get("roc")
+        if roc:
+            roc_score = min(abs(roc) / 3, 1)
+            score["momentum_score"] = max(score["momentum_score"], roc_score * 0.7)
+            score["details"]["roc"] = roc
+
+    def _calculate_total_score(self, score: dict) -> float:
+        signal_count = len(score["signals"])
+        signal_boost = min(signal_count * 0.05, 0.15)
+
+        severity_scores = {"critical": 1.0, "high": 0.8, "medium": 0.5, "low": 0.3}
+        severity_score = severity_scores.get(score["max_severity"], 0.3)
+
+        return (
+            score["max_confidence"] * self.WEIGHTS["signal_strength"]
+            + score["momentum_score"] * self.WEIGHTS["momentum"]
+            + score["compression_score"] * self.WEIGHTS["compression"]
+            + score["volume_score"] * self.WEIGHTS["volume"]
+            + score["history_score"] * self.WEIGHTS["history"]
+            + severity_score * signal_boost
+        )
+
+
+@dataclass
 class RealtimeAlert:
     symbol: str
     timeframe: str
@@ -146,7 +293,10 @@ class RealtimeScanner:
         self._lock = threading.RLock()
         self._feishu_client = self._init_feishu()
         self._filter = AlertFilter(min_confidence=0.85, silence_minutes=30)
+        self._ranker = SymbolRanker(history_manager=history_manager, config=config)
         self._last_report_time: datetime | None = None
+        self._last_ranking_time: datetime | None = None
+        self._ranking_interval = config.get("scanner", {}).get("ranking_interval_minutes", 5) * 60
         self._first_scan_done = asyncio.Event()
 
     def _init_feishu(self):
@@ -246,6 +396,7 @@ class RealtimeScanner:
         scan_start = datetime.now()
         logger.info(f"Realtime scan started at {scan_start}")
         alerts = []
+        ind_data_map: dict[str, dict] = {}
         for symbol in self._symbols:
             for tf in self._timeframes:
                 candles = self._cache.get_closed(symbol, tf)
@@ -256,6 +407,7 @@ class RealtimeScanner:
                 ind_data = compute_all_indicators(df, params)
                 if not ind_data:
                     continue
+                ind_data_map[symbol] = ind_data
                 sigs = self._check_signals(symbol, tf, ind_data)
                 for sig in sigs:
                     sig.confidence = self._score_with_history(sig, ind_data)
@@ -272,6 +424,9 @@ class RealtimeScanner:
         # 写入共享信号存储，供持仓监控使用
         get_signal_store().update(alerts)
         logger.info(f"Realtime scan completed: {len(alerts)} alerts")
+
+        # TOP5 标的排序推荐
+        self._send_ranking_report(scan_start, alerts, ind_data_map)
 
     def _send_feishu_report(self, scan_time: datetime, alerts: list):
         if not self._feishu_client:
@@ -302,6 +457,67 @@ class RealtimeScanner:
                 lines.append(self._fmt_alert(a))
 
         self._feishu_client.send_message("\n".join(lines))
+
+    def _send_ranking_report(self, scan_time: datetime, alerts: list, ind_data_map: dict):
+        if not self._feishu_client:
+            return
+        if self._last_ranking_time:
+            elapsed = (datetime.now() - self._last_ranking_time).total_seconds()
+            if elapsed < self._ranking_interval:
+                return
+        if not alerts:
+            return
+
+        self._last_ranking_time = datetime.now()
+        trending, consolidating = self._ranker.rank_symbols(alerts, ind_data_map)
+
+        if not trending and not consolidating:
+            return
+
+        time_str = scan_time.strftime("%Y-%m-%d %H:%M")
+        lines = [f"\n🏆 TOP5 标的推荐 [{time_str}]"]
+
+        if trending:
+            lines.append("\n📈 趋势市场 TOP5:")
+            for i, r in enumerate(trending, 1):
+                dir_icon = "🟢" if r.direction == "long" else "🔴"
+                sig_tags = "/".join([self._get_signal_tag(s) for s in r.signal_types[:2]])
+                bar = self._score_bar(r.score)
+                lines.append(f"{i}. {self._fmt_symbol(r.symbol)} {dir_icon} {r.score:.0%} {bar}")
+                lines.append(f"   信号:{sig_tags} | 置信:{r.confidence:.0%}")
+
+        if consolidating:
+            lines.append("\n📊 震荡市场 TOP5:")
+            for i, r in enumerate(consolidating, 1):
+                dir_icon = "🟢" if r.direction == "long" else "🔴"
+                sig_tags = "/".join([self._get_signal_tag(s) for s in r.signal_types[:2]])
+                bar = self._score_bar(r.score)
+                lines.append(f"{i}. {self._fmt_symbol(r.symbol)} {dir_icon} {r.score:.0%} {bar}")
+                lines.append(f"   信号:{sig_tags} | 置信:{r.confidence:.0%}")
+
+        self._feishu_client.send_message("\n".join(lines))
+        logger.info(f"Ranking sent: {len(trending)} trending, {len(consolidating)} consolidating")
+
+    def _fmt_symbol(self, symbol: str) -> str:
+        return symbol.replace("-USDT-SWAP", "/USDT").replace("USDT:USDT", "")
+
+    def _get_signal_tag(self, sig_type: str) -> str:
+        tags = {
+            "bb_width_squeeze": "BB",
+            "ma_converge": "MA",
+            "rsi_extreme": "RSI",
+            "macd_cross": "MACD",
+            "volume_spike": "VOL",
+            "ttm_squeeze": "TTM",
+            "rsi_divergence": "RSI背",
+            "macd_divergence": "MACD背",
+            "volume_breakout": "突破",
+        }
+        return tags.get(sig_type, sig_type[:4])
+
+    def _score_bar(self, score: float) -> str:
+        filled = int(score * 10)
+        return "█" * filled + "░" * (10 - filled)
 
     def _candles_to_df(self, candles: list[CandleData]) -> pd.DataFrame:
         data = [{
