@@ -14,23 +14,23 @@ signals:
     name_en: "BB Width Squeeze"
     stage: 1
     category: "trend_accumulation"
-    description: "布林带收窄至历史低位，暗示潜在突破"
+    description: "布林带宽度处于历史低位，暗示潜在突破"
     
     # Market regime applicability
     regimes:
       - "trend"      # Can trigger in both regimes
       - "range"
     
-    # Parameters
+    # Parameters: 使用历史百分位判断
     params:
-      bb_width_pct_threshold: 20
+      bb_width_pct_rank_threshold: 25  # 历史百分位阈值，越低越压缩
       lookback: 20
     
-    # Severity calculation
+    # Severity calculation based on historical percentile rank
     severity:
-      critical: 10      # bb_pct <= 10
-      high: 20          # bb_pct <= 20
-      medium: 30        # bb_pct <= 30
+      critical: 10      # bbw_rank <= 10 (极度压缩)
+      high: 20          # bbw_rank <= 20 (高度压缩)
+      medium: 25        # bbw_rank <= 25 (中度压缩)
       low: 100
     
     # Direction inference
@@ -287,6 +287,126 @@ signals:
       momentum_persistence: 0.3
       histogram_magnitude: 0.3
       volume_confirmation: 0.2
+
+  # ===========================================================================
+  # Stage 1: Advanced Momentum Signals (New)
+  # ===========================================================================
+  
+  - id: "ttm_squeeze"
+    name: "TTM压缩"
+    name_en: "TTM Squeeze"
+    stage: 1
+    category: "advanced_momentum"
+    description: "布林带收缩到肯特纳通道内，连续压缩后释放可能产生大幅波动"
+    
+    regimes:
+      - "trend"
+      - "range"
+    
+    params:
+      bb_period: 20
+      bb_std: 2.0
+      kc_period: 20
+      kc_multiplier: 1.5
+      min_squeeze_bars: 5
+    
+    severity:
+      critical: 8       # 压缩>=8根K线后释放
+      high: 5          # 压缩>=5根K线
+      medium: 3        # 压缩>=3根K线
+      low: 100
+    
+    direction_from: "trend_direction"
+    
+    confidence:
+      squeeze_duration: 0.3
+      regime_match: 0.2
+      volume_confirmation: 0.25
+      breakout_direction: 0.25
+
+  - id: "rsi_divergence"
+    name: "RSI背离"
+    name_en: "RSI Divergence"
+    stage: 1
+    category: "advanced_momentum"
+    description: "价格与RSI产生背离，暗示趋势可能反转"
+    
+    regimes:
+      - "trend"
+      - "range"
+    
+    params:
+      period: 14
+      pivot_left: 5
+      pivot_right: 5
+      min_distance_pct: 2.0
+    
+    severity:
+      critical: 3.0     # 强烈背离
+      high: 5.0         # 中度背离
+      medium: 10.0      # 轻微背离
+    
+    direction_from: "divergence_direction"
+    
+    confidence:
+      divergence_strength: 0.35
+      regime_match: 0.2
+      volume_confirmation: 0.25
+      multi_timeframe: 0.2
+
+  - id: "macd_divergence"
+    name: "MACD背离"
+    name_en: "MACD Divergence"
+    stage: 1
+    category: "advanced_momentum"
+    description: "价格与MACD产生背离，暗示趋势可能反转"
+    
+    regimes:
+      - "trend"
+      - "range"
+    
+    params:
+      pivot_left: 5
+      pivot_right: 5
+      min_distance_pct: 2.0
+    
+    severity:
+      critical: 3.0     # 强烈背离
+      high: 5.0         # 中度背离
+      medium: 10.0      # 轻微背离
+    
+    direction_from: "divergence_direction"
+    
+    confidence:
+      divergence_strength: 0.35
+      regime_match: 0.2
+      volume_confirmation: 0.25
+      multi_timeframe: 0.2
+
+  - id: "volume_breakout"
+    name: "成交量突破确认"
+    name_en: "Volume Breakout Confirmation"
+    stage: 1
+    category: "advanced_momentum"
+    description: "成交量超过均量的指定倍数，确认价格突破的有效性"
+    
+    regimes:
+      - "trend"
+    
+    params:
+      breakout_threshold: 1.5
+    
+    severity:
+      critical: 3.0
+      high: 5.0
+      medium: 10.0
+    
+    direction_from: "trend_direction"
+    
+    confidence:
+      volume_strength: 0.4
+      price_momentum: 0.3
+      regime_match: 0.3
 
   # ===========================================================================
   # Stage 2: Trend Entry Signals

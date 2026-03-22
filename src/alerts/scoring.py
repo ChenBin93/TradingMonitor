@@ -57,6 +57,15 @@ class ConfidenceScorer:
         scores["multi_timeframe"] = self._score_multi_timeframe(state)
         if stats:
             scores["historical_volatility"] = self._score_historical_volatility(stats)
+        ttm_squeeze = state.get("ttm_squeeze")
+        if ttm_squeeze:
+            scores["ttm_squeeze"] = 0.9 if ttm_squeeze.get("is_fired") else (0.6 if ttm_squeeze.get("squeeze_bars", 0) >= 3 else 0.3)
+        rsi_div = state.get("rsi_divergence")
+        if rsi_div:
+            scores["rsi_divergence"] = 0.9 if rsi_div.get("divergence") == "bullish" else (0.7 if rsi_div.get("divergence") else 0.3)
+        vol_breakout = state.get("volume_breakout")
+        if vol_breakout:
+            scores["volume_breakout"] = min(vol_breakout.get("vol_ratio", 1) / 2.0, 1.0) if vol_breakout.get("confirmed") else 0.3
         return scores
 
     def _score_range(self, signal: dict, state: dict, stats: Optional[SymbolStats] = None) -> dict[str, float]:
@@ -70,12 +79,21 @@ class ConfidenceScorer:
             scores["rsi_extreme"] = 0.5
         else:
             scores["rsi_extreme"] = 0.3
-        bb_pct = state.get("bb_width_pct") or 50
+        bb_pct = state.get("bb_width_short_pct") or 50
         scores["volatility_compression"] = (100 - bb_pct) / 100.0
         vol_ratio = state.get("volume_ratio") or 1.0
         scores["volume_confirmation"] = 0.5 if vol_ratio < 1.5 else 0.7
         if stats:
             scores["historical_reversion"] = self._score_historical_reversion(stats)
+        ttm_squeeze = state.get("ttm_squeeze")
+        if ttm_squeeze:
+            scores["ttm_squeeze"] = 0.9 if ttm_squeeze.get("is_fired") else (0.6 if ttm_squeeze.get("squeeze_bars", 0) >= 3 else 0.3)
+        rsi_div = state.get("rsi_divergence")
+        if rsi_div:
+            scores["rsi_divergence"] = 0.9 if rsi_div.get("divergence") else 0.3
+        macd_div = state.get("macd_divergence")
+        if macd_div:
+            scores["macd_divergence"] = 0.9 if macd_div.get("divergence") else 0.3
         return scores
 
     def _score_multi_timeframe(self, state: dict) -> float:
@@ -102,19 +120,27 @@ class ConfidenceScorer:
 
     def _get_weights(self, signal: dict, regime: str) -> dict[str, float]:
         if regime == "trend":
-            return {
-                "adx_strength": 0.25,
-                "volume_confirmation": 0.2,
-                "roc_momentum": 0.2,
-                "multi_timeframe": 0.2,
-                "historical_volatility": 0.15,
+            weights = {
+                "adx_strength": 0.20,
+                "volume_confirmation": 0.15,
+                "roc_momentum": 0.15,
+                "multi_timeframe": 0.15,
+                "historical_volatility": 0.10,
+                "ttm_squeeze": 0.10,
+                "rsi_divergence": 0.08,
+                "volume_breakout": 0.07,
             }
-        return {
-            "rsi_extreme": 0.3,
-            "volatility_compression": 0.25,
-            "volume_confirmation": 0.2,
-            "historical_reversion": 0.25,
-        }
+        else:
+            weights = {
+                "rsi_extreme": 0.25,
+                "volatility_compression": 0.20,
+                "volume_confirmation": 0.15,
+                "historical_reversion": 0.15,
+                "ttm_squeeze": 0.10,
+                "rsi_divergence": 0.08,
+                "macd_divergence": 0.07,
+            }
+        return weights
 
     def _weighted_average(self, scores: dict[str, float], weights: dict[str, float]) -> float:
         total_weight = 0.0

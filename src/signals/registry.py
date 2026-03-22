@@ -1,6 +1,9 @@
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
+
+if TYPE_CHECKING:
+    from src.signals.stage1 import SymbolState
 
 
 class SignalType(Enum):
@@ -102,23 +105,35 @@ class SignalRegistry:
         self.register_func("volume_contraction", self._check_volume_contraction)
         self.register_func("consolidation", self._check_consolidation)
         self.register_func("volume_spike", self._check_volume_spike)
+        self.register_func("ttm_squeeze", self._check_ttm_squeeze)
+        self.register_func("rsi_divergence", self._check_rsi_divergence)
+        self.register_func("macd_divergence", self._check_macd_divergence)
+        self.register_func("volume_breakout", self._check_volume_breakout)
 
-    def _check_bb_width_squeeze(self, signal: SignalDefinition, state: dict) -> dict | None:
-        bb_pct = state.get("bb_width_pct")
-        if bb_pct is None:
+    def _check_bb_width_squeeze(self, signal: SignalDefinition, state: "SymbolState") -> dict | None:
+        bb_width = state.bb_width
+        if bb_width is None:
             return None
-        threshold = signal.params.get("bb_width_pct_threshold", 20)
-        if bb_pct <= threshold:
-            severity = "critical" if bb_pct <= 10 else "high" if bb_pct <= 15 else "medium"
+        bbw_rank = state.bb_width_long_pct
+        if bbw_rank is None:
+            return None
+        threshold_rank = signal.params.get("bb_width_pct_rank_threshold", 25)
+        if bbw_rank <= threshold_rank:
+            severity = "critical" if bbw_rank <= 10 else "high"
             return {
                 "signal_type": signal.id,
                 "severity": severity,
-                "details": {"bb_pct": bb_pct, "threshold": threshold},
+                "details": {
+                    "bb_width": round(bb_width, 2),
+                    "bbw_rank": round(bbw_rank, 1),
+                    "threshold_rank": threshold_rank,
+                    "bb_width_short_pct": round(state.bb_width_short_pct, 1) if state.bb_width_short_pct else None,
+                },
             }
         return None
 
-    def _check_ma_converge(self, signal: SignalDefinition, state: dict) -> dict | None:
-        ma_converge = state.get("ma_converge")
+    def _check_ma_converge(self, signal: SignalDefinition, state: "SymbolState") -> dict | None:
+        ma_converge = state.ma_converge
         if ma_converge is None:
             return None
         threshold = signal.params.get("converge_threshold", 0.5)
@@ -131,8 +146,8 @@ class SignalRegistry:
             }
         return None
 
-    def _check_rsi_extreme(self, signal: SignalDefinition, state: dict) -> dict | None:
-        rsi = state.get("rsi")
+    def _check_rsi_extreme(self, signal: SignalDefinition, state: "SymbolState") -> dict | None:
+        rsi = state.rsi
         if rsi is None:
             return None
         oversold = signal.params.get("oversold", 35)
@@ -153,8 +168,8 @@ class SignalRegistry:
             }
         return None
 
-    def _check_volume_contraction(self, signal: SignalDefinition, state: dict) -> dict | None:
-        vol_ratio = state.get("volume_ratio")
+    def _check_volume_contraction(self, signal: SignalDefinition, state: "SymbolState") -> dict | None:
+        vol_ratio = state.volume_ratio
         if vol_ratio is None:
             return None
         threshold = signal.params.get("volume_threshold", 0.5)
@@ -166,9 +181,9 @@ class SignalRegistry:
             }
         return None
 
-    def _check_consolidation(self, signal: SignalDefinition, state: dict) -> dict | None:
-        df = state.get("_df")
-        atr = state.get("atr")
+    def _check_consolidation(self, signal: SignalDefinition, state: "SymbolState") -> dict | None:
+        df = state.data.get("_df")
+        atr = state.atr
         if df is None or atr is None or atr == 0:
             return None
         bars = signal.params.get("consolidation_bars", 20)
@@ -184,8 +199,8 @@ class SignalRegistry:
                 }
         return None
 
-    def _check_volume_spike(self, signal: SignalDefinition, state: dict) -> dict | None:
-        vol_ratio = state.get("volume_ratio")
+    def _check_volume_spike(self, signal: SignalDefinition, state: "SymbolState") -> dict | None:
+        vol_ratio = state.volume_ratio
         if vol_ratio is None:
             return None
         threshold = signal.params.get("volume_spike_threshold", 5.0)
@@ -194,5 +209,85 @@ class SignalRegistry:
                 "signal_type": signal.id,
                 "severity": "critical",
                 "details": {"vol_ratio": vol_ratio, "threshold": threshold},
+            }
+        return None
+
+    def _check_ttm_squeeze(self, signal: SignalDefinition, state: "SymbolState") -> dict | None:
+        ttm_squeeze = state.data.get("ttm_squeeze")
+        if ttm_squeeze is None:
+            return None
+        squeeze_bars = ttm_squeeze.get("squeeze_bars", 0)
+        min_squeeze = signal.params.get("min_squeeze_bars", 5)
+        if squeeze_bars >= min_squeeze or ttm_squeeze.get("is_fired"):
+            severity = "critical" if squeeze_bars >= 8 else "high" if squeeze_bars >= 5 else "medium"
+            direction = ttm_squeeze.get("direction") or state.direction
+            return {
+                "signal_type": signal.id,
+                "severity": severity,
+                "direction": direction,
+                "details": {
+                    "squeeze_active": ttm_squeeze.get("squeeze_active"),
+                    "squeeze_bars": squeeze_bars,
+                    "is_fired": ttm_squeeze.get("is_fired"),
+                    "direction": direction,
+                },
+            }
+        return None
+
+    def _check_rsi_divergence(self, signal: SignalDefinition, state: "SymbolState") -> dict | None:
+        rsi_div = state.data.get("rsi_divergence")
+        if rsi_div is None:
+            return None
+        divergence = rsi_div.get("divergence")
+        if divergence is None:
+            return None
+        severity = "critical" if rsi_div.get("price_distance_pct", 0) >= 5 else "high" if rsi_div.get("price_distance_pct", 0) >= 3 else "medium"
+        direction = "long" if divergence == "bullish" else "short" if divergence == "bearish" else state.direction
+        return {
+            "signal_type": signal.id,
+            "severity": severity,
+            "direction": direction,
+            "details": {
+                "divergence": divergence,
+                "rsi_value": rsi_div.get("rsi_value"),
+                "price_distance_pct": rsi_div.get("price_distance_pct"),
+            },
+        }
+
+    def _check_macd_divergence(self, signal: SignalDefinition, state: "SymbolState") -> dict | None:
+        macd_div = state.data.get("macd_divergence")
+        if macd_div is None:
+            return None
+        divergence = macd_div.get("divergence")
+        if divergence is None:
+            return None
+        severity = "critical" if macd_div.get("price_distance_pct", 0) >= 5 else "high" if macd_div.get("price_distance_pct", 0) >= 3 else "medium"
+        direction = "long" if divergence == "bullish" else "short" if divergence == "bearish" else state.direction
+        return {
+            "signal_type": signal.id,
+            "severity": severity,
+            "direction": direction,
+            "details": {
+                "divergence": divergence,
+                "macd_value": macd_div.get("macd_value"),
+                "price_distance_pct": macd_div.get("price_distance_pct"),
+            },
+        }
+
+    def _check_volume_breakout(self, signal: SignalDefinition, state: "SymbolState") -> dict | None:
+        vol_breakout = state.data.get("volume_breakout")
+        if vol_breakout is None:
+            return None
+        if vol_breakout.get("confirmed"):
+            severity = "critical" if vol_breakout.get("vol_ratio", 0) >= 3 else "high" if vol_breakout.get("vol_ratio", 0) >= 2 else "medium"
+            return {
+                "signal_type": signal.id,
+                "severity": severity,
+                "direction": state.direction,
+                "details": {
+                    "vol_ratio": vol_breakout.get("vol_ratio"),
+                    "price_change_pct": vol_breakout.get("price_change_pct"),
+                    "is_expansion": vol_breakout.get("is_expansion"),
+                },
             }
         return None

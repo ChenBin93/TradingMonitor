@@ -113,8 +113,16 @@ class Scanner:
         from src.signals.stage2 import Stage2Detector
         from src.alerts.manager import AlertManager
         from src.alerts.push import PushController
+        from src.data.history_db import HistoryDB, HistoryManager
 
-        monitor = Stage1Monitor(self.config)
+        history_manager = None
+        if self.config.get("data", {}).get("history", {}).get("enabled", False):
+            db_path = self.config.get("data", {}).get("history", {}).get("db_path", "data/history.db")
+            db = HistoryDB(db_path)
+            history_manager = HistoryManager(db)
+            logger.debug("HistoryManager initialized for batch scan")
+
+        monitor = Stage1Monitor(self.config, history_manager=history_manager)
         stage2 = Stage2Detector(self.config)
         alert_mgr = AlertManager(self.config)
 
@@ -196,7 +204,8 @@ class Scanner:
             sig["roc"] = state.data.get("roc")
             sig["rsi"] = state.data.get("rsi")
             sig["adx"] = state.data.get("adx")
-            sig["bb_width_pct"] = state.data.get("bb_width_pct")
+            sig["bb_width"] = state.data.get("bb_width")
+            sig["bb_width_short_pct"] = state.data.get("bb_width_short_pct")
             sig["volume_ratio"] = state.data.get("volume_ratio")
         return signals
 
