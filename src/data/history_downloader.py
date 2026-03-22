@@ -54,15 +54,22 @@ class HistoryDownloader:
         if days_list is None:
             days_list = [90, 180, 365]
         for days in days_list:
-            logger.info(f"Starting full history sync ({days} days) for {len(self._symbols)} symbols")
-            total_downloaded = 0
             pairs = [(s, tf) for s in self._symbols for tf in self._timeframes]
-            for i in range(0, len(pairs), self.batch_size):
-                batch = pairs[i:i + self.batch_size]
+            existing = self.db.get_existing_symbols(days)
+            pairs_to_download = [(s, tf) for s, tf in pairs if (s, tf) not in existing]
+            
+            if not pairs_to_download:
+                logger.info(f"History sync ({days}d): all {len(pairs)} pairs already exist, skipping")
+                continue
+            
+            logger.info(f"Starting history sync ({days}d): {len(pairs_to_download)}/{len(pairs)} pairs need download")
+            total_downloaded = 0
+            for i in range(0, len(pairs_to_download), self.batch_size):
+                batch = pairs_to_download[i:i + self.batch_size]
                 count = await self.download_batch(batch, days)
                 total_downloaded += count
-                logger.info(f"Progress ({days}d): {min(i + self.batch_size, len(pairs))}/{len(pairs)}, downloaded: {total_downloaded}")
-                if i + self.batch_size < len(pairs):
+                logger.info(f"Progress ({days}d): {min(i + self.batch_size, len(pairs_to_download))}/{len(pairs_to_download)}, downloaded: {total_downloaded}")
+                if i + self.batch_size < len(pairs_to_download):
                     await asyncio.sleep(self.download_interval)
             logger.info(f"Full sync ({days}d) completed: {total_downloaded} total candles")
 

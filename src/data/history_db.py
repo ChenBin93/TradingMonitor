@@ -168,6 +168,19 @@ class HistoryDB:
                 "streak": json.loads(row["streak"]),
             }
 
+    def get_existing_symbols(self, lookback_days: int) -> set[tuple[str, str]]:
+        with self._lock:
+            conn = sqlite3.connect(self.db_path)
+            c = conn.cursor()
+            c.execute("""
+                SELECT DISTINCT symbol, timeframe
+                FROM symbol_stats
+                WHERE lookback_days=?
+            """, (lookback_days,))
+            rows = c.fetchall()
+            conn.close()
+            return {(row[0], row[1]) for row in rows}
+
     def cleanup_old_data(self, retention_days: dict[str, int]):
         with self._lock:
             conn = sqlite3.connect(self.db_path)
