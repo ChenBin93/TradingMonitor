@@ -145,7 +145,7 @@ class RealtimeScanner:
         self._scan_interval = config.get("scanner", {}).get("interval_seconds", 300)
         self._lock = threading.RLock()
         self._feishu_client = self._init_feishu()
-        self._filter = AlertFilter(min_confidence=0.75, silence_minutes=30)
+        self._filter = AlertFilter(min_confidence=0.85, silence_minutes=30)
         self._last_report_time: datetime | None = None
         self._first_scan_done = asyncio.Event()
 
@@ -342,12 +342,14 @@ class RealtimeScanner:
         lookback = self.config.get("data", {}).get("history", {}).get("default_lookback", 90)
         boost = 0.0
 
-        vol_rank = self.history_manager.get_volatility_squeeze_rank(symbol, tf, lookback)
-
         if alert.signal_type == "bb_width_squeeze":
-            if vol_rank < 20:
+            bb_width_val = ind_data.get("bb_width") or 0
+            bbw_rank = self.history_manager.get_bbw_percentile_rank(symbol, tf, lookback, bb_width_val)
+            if bbw_rank <= 10:
+                boost += 0.15
+            elif bbw_rank <= 20:
                 boost += 0.10
-            elif vol_rank < 35:
+            elif bbw_rank <= 30:
                 boost += 0.05
 
         elif alert.signal_type == "volume_spike":
@@ -363,6 +365,7 @@ class RealtimeScanner:
                 boost += 0.05
 
         elif alert.signal_type == "ma_converge":
+            vol_rank = self.history_manager.get_volatility_squeeze_rank(symbol, tf, lookback)
             if vol_rank < 25:
                 boost += 0.07
 
@@ -373,25 +376,34 @@ class RealtimeScanner:
         adx = ind_data.get("adx")
         rsi = ind_data.get("rsi")
         bb_pct = ind_data.get("bb_width_pct")
+        bb_actual = ind_data.get("bb_width")
         ma_converge = ind_data.get("ma_converge")
         macd_hist = ind_data.get("macd_hist")
         volume_ratio = ind_data.get("volume_ratio")
         regime = "trend" if (adx or 0) >= 20 else "range"
         direction = self._get_direction(ind_data)
 
-        bb_threshold = self.config.get("indicators", {}).get("bb_width_pct_threshold", 20)
-        if bb_pct and bb_pct <= bb_threshold:
-            alerts.append(RealtimeAlert(
-                symbol=symbol,
-                timeframe=tf,
-                signal_type="bb_width_squeeze",
-                regime=regime,
-                direction=direction,
-                severity="critical" if bb_pct <= 10 else "high",
-                confidence=0.7,
-                details={"bb_pct": bb_pct, "threshold": bb_threshold},
-                timestamp=datetime.now(),
-            ))
+        bb_threshold_pct_rank = self.config.get("indicators", {}).get("bb_width_pct_rank_threshold", 25)
+        if bb_actual and bb_pct and self.history_manager:
+            lookback = self.config.get("data", {}).get("history", {}).get("default_lookback", 90)
+            bbw_rank = self.history_manager.get_bbw_percentile_rank(symbol, tf, lookback, bb_actual)
+            if bbw_rank <= bb_threshold_pct_rank:
+                alerts.append(RealtimeAlert(
+                    symbol=symbol,
+                    timeframe=tf,
+                    signal_type="bb_width_squeeze",
+                    regime=regime,
+                    direction=direction,
+                    severity="critical" if bbw_rank <= 10 else "high",
+                    confidence=0.7,
+                    details={
+                        "bb_pct": bb_pct,
+                        "bb_width": bb_actual,
+                        "bbw_rank": bbw_rank,
+                        "threshold_rank": bb_threshold_pct_rank,
+                    },
+                    timestamp=datetime.now(),
+                ))
         ma_threshold = self.config.get("indicators", {}).get("ma_converge_threshold", 0.5)
         if ma_converge and ma_converge <= ma_threshold:
             alerts.append(RealtimeAlert(
@@ -405,8 +417,8 @@ class RealtimeScanner:
                 details={"ma_converge": ma_converge, "threshold": ma_threshold},
                 timestamp=datetime.now(),
             ))
-        rsi_oversold = self.config.get("indicators", {}).get("rsi", {}).get("oversold", 35)
-        rsi_overbot = self.config.get("indicators", {}).get("rsi", {}).get("overbot", 65)
+        rsi_oversold = self.config.get("indicators", {}).get("rsi", {}).get("oversold", 30)
+        rsi_overbot = self.config.get("indicators", {}).get("rsi", {}).get("overbot", 70)
         if rsi:
             if rsi <= rsi_oversold:
                 alerts.append(RealtimeAlert(
@@ -472,7 +484,8 @@ class RealtimeScanner:
         if a.signal_type == "rsi_extreme":
             detail = f" RSI:{d.get('rsi', 0):.0f}"
         elif a.signal_type == "bb_width_squeeze":
-            detail = f" BB:{d.get('bb_pct', 0):.1f}%"
+            rank = d.get('bbw_rank', 0)
+            detail = f" BB压缩位:{rank:.0f}%"
         elif a.signal_type == "ma_converge":
             detail = f" MA汇聚:{d.get('ma_converge', 0):.2f}"
         elif a.signal_type == "macd_cross":

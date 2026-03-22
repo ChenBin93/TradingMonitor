@@ -139,8 +139,6 @@ class WebSocketManager:
             try:
                 msg = await asyncio.wait_for(self._ws.recv(), timeout=60)
                 data = json.loads(msg)
-                if data.get("event") == "error":
-                    logger.warning(f"WS error: {data.get('msg', '')}")
                 await self._handle_message(data)
             except asyncio.TimeoutError:
                 continue
@@ -156,7 +154,10 @@ class WebSocketManager:
         if evt in ("subscribe", "unsubscribe"):
             return
         if evt == "error":
-            logger.warning(f"WS error: {data.get('msg', '')}")
+            msg = data.get("msg", "")
+            if "trades" in msg:
+                return
+            logger.warning(f"WS error: {msg}")
             return
         arg = data.get("arg", {})
         channel = arg.get("channel", "")

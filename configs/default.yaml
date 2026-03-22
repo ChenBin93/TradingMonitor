@@ -79,10 +79,8 @@ indicators:
   bb:
     period: 20
     std: 2
-  ma:
-    long: 60
-    mid: 20
-    short: 5
+  bb_width_pct_threshold: 15
+  bb_width_pct_rank_threshold: 25  # BBW percentile rank threshold (lower = more compressed)
   macd:
     bars_confirm: 3
     fast: 12
@@ -93,8 +91,8 @@ indicators:
     1h: 10
     4h: 20
   rsi:
-    overbot: 65
-    oversold: 35
+    overbot: 70
+    oversold: 30
     period: 14
   volume_ma_period: 20
 logging:
@@ -106,7 +104,7 @@ logging:
     max_size_mb: 100
 scanner:
   historical_bars: 200
-  interval_seconds: 60
+  interval_seconds: 120
   symbol_refresh_interval: 12
 signals:
   config_file: configs/signals.yaml

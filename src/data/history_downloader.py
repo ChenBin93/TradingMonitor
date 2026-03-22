@@ -158,6 +158,15 @@ class HistoryStatsComputer:
             if mid > 0:
                 bb_widths.append((2 * bb_std_mult * std) / mid * 100)
 
+        bb_width_percents = self._percentiles(bb_widths, pct_cuts)
+        bb_width_summary = self._summary_stats(bb_widths)
+        bb_width_percents_short = self._percentiles(
+            bb_widths[-self.windows["short"]:], pct_cuts
+        ) if len(bb_widths) >= self.windows["short"] else {p: 0.0 for p in pct_cuts}
+        bb_width_percents_medium = self._percentiles(
+            bb_widths[-self.windows["medium"]:], pct_cuts
+        ) if len(bb_widths) >= self.windows["medium"] else {p: 0.0 for p in pct_cuts}
+
         vol_duration = float(np.sum(volatility > vol_mean) / len(volatility)) if len(volatility) > 0 else 0.0
 
         dd_durations = []
@@ -217,7 +226,13 @@ class HistoryStatsComputer:
             "percentiles_medium": vol_perc_medium,
             "percentiles_long": vol_perc_long,
             "summary": vol_summary,
-            "bb_width_summary": self._summary_stats(bb_widths),
+        }
+
+        bb_width_stats = {
+            "percentiles": bb_width_percents,
+            "percentiles_short": bb_width_percents_short,
+            "percentiles_medium": bb_width_percents_medium,
+            "summary": bb_width_summary,
         }
 
         volume_stats = {
@@ -232,6 +247,7 @@ class HistoryStatsComputer:
             "timeframe": timeframe,
             "lookback_days": lookback_days,
             "volatility": volatility_stats,
+            "bb_width": bb_width_stats,
             "return_stat": {
                 "percentiles": ret_percents,
                 "summary": ret_summary,

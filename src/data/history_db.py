@@ -42,6 +42,7 @@ class HistoryDB:
                     lookback_days INTEGER NOT NULL,
                     computed_at DATETIME NOT NULL,
                     volatility TEXT NOT NULL DEFAULT '{}',
+                    bb_width TEXT NOT NULL DEFAULT '{}',
                     return_stat TEXT NOT NULL DEFAULT '{}',
                     volume TEXT NOT NULL DEFAULT '{}',
                     drawdown TEXT NOT NULL DEFAULT '{}',
@@ -123,12 +124,13 @@ class HistoryDB:
             c.execute("""
                 INSERT OR REPLACE INTO symbol_stats
                 (symbol, timeframe, lookback_days, computed_at,
-                 volatility, return_stat, volume, drawdown, streak)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 volatility, bb_width, return_stat, volume, drawdown, streak)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 stats["symbol"], stats["timeframe"], stats["lookback_days"],
                 datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 json.dumps(stats.get("volatility", {})),
+                json.dumps(stats.get("bb_width", {})),
                 json.dumps(stats.get("return_stat", {})),
                 json.dumps(stats.get("volume", {})),
                 json.dumps(stats.get("drawdown", {})),
@@ -144,7 +146,7 @@ class HistoryDB:
             conn.row_factory = sqlite3.Row
             c = conn.cursor()
             c.execute("""
-                SELECT volatility, return_stat, volume, drawdown, streak, computed_at
+                SELECT volatility, bb_width, return_stat, volume, drawdown, streak, computed_at
                 FROM symbol_stats
                 WHERE symbol=? AND timeframe=? AND lookback_days=?
                 ORDER BY computed_at DESC LIMIT 1
@@ -159,6 +161,7 @@ class HistoryDB:
                 "lookback_days": lookback_days,
                 "computed_at": row["computed_at"],
                 "volatility": json.loads(row["volatility"]),
+                "bb_width": json.loads(row["bb_width"]),
                 "return_stat": json.loads(row["return_stat"]),
                 "volume": json.loads(row["volume"]),
                 "drawdown": json.loads(row["drawdown"]),
@@ -191,8 +194,21 @@ class HistoryManager:
         self.default_lookback = default_lookback
         self._cache: dict[str, dict] = {}
 
+    def _normalize_symbol(self, symbol: str) -> str:
+        """Normalize symbol to DB format (BTC/USDT:USDT)."""
+        if "/" in symbol:
+            return symbol
+        if symbol.endswith("-USDT-SWAP"):
+            base = symbol.replace("-USDT-SWAP", "")
+            return f"{base}/USDT:USDT"
+        if "-" in symbol:
+            base = symbol.replace("-", "/")
+            return f"{base}:USDT"
+        return symbol
+
     def get_stats(self, symbol: str, timeframe: str,
                   lookback_days: int | None = None) -> dict | None:
+        symbol = self._normalize_symbol(symbol)
         if lookback_days is None:
             lookback_days = self.default_lookback
         key = f"{symbol}_{timeframe}_{lookback_days}"
@@ -268,6 +284,31 @@ class HistoryManager:
         return self.get_percentile_rank(
             symbol, timeframe, lookback_days, "volatility", "long", 0.0
         )
+
+    def get_bbw_percentile_rank(self, symbol: str, timeframe: str,
+                               lookback_days: int | None = None,
+                               current_bbw: float = 0.0) -> float:
+        """BBW历史百分位排名：当前BBW在历史分布中的位置。
+        排名越低 = BBW越窄 = 越压缩。"""
+        stats = self.get_stats(symbol, timeframe, lookback_days)
+        if not stats:
+            return 50.0
+
+        bbw = stats.get("bb_width", {})
+        if not bbw:
+            return 50.0
+
+        # 使用 long window (全量数据) 的 percentiles
+        percs = bbw.get("percentiles", {})
+        if not percs:
+            return 50.0
+
+        p_values = sorted([float(k) for k in percs.keys() if k not in ("current_rank",)])
+        if not p_values:
+            return 50.0
+
+        v_values = [percs[str(int(p))] for p in p_values]
+        return self._interpolate_rank(p_values, v_values, current_bbw)
 
     def invalidate_cache(self):
         self._cache.clear()
