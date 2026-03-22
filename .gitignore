@@ -34,8 +34,8 @@ env/
 .DS_Store
 Thumbs.db
 
-# Data
-data/
+# Data (root only, not src/data/)
+/data/
 *.db
 *.sqlite
 
