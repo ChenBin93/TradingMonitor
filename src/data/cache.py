@@ -72,6 +72,14 @@ class CacheManager:
         with self._lock:
             return list(self._cache.get(symbol, {}).get(timeframe, []))
 
+    def get_closed(self, symbol: str, timeframe: str) -> list[CandleData]:
+        now = datetime.now()
+        secs = {"15m": 900, "1h": 3600, "4h": 14400}.get(timeframe, 900)
+        with self._lock:
+            all_c = self._cache.get(symbol, {}).get(timeframe, [])
+            complete = [c for c in all_c if (now - c.timestamp).total_seconds() > secs * 0.9]
+            return complete if complete else list(all_c)
+
     def get_since(self, symbol: str, timeframe: str, since: datetime) -> list[CandleData]:
         with self._lock:
             candles = self._cache.get(symbol, {}).get(timeframe, [])

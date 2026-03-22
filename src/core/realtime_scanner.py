@@ -131,9 +131,10 @@ class RealtimeAlert:
 
 
 class RealtimeScanner:
-    def __init__(self, config: dict[str, Any], history_manager=None):
+    def __init__(self, config: dict[str, Any], history_manager=None, price_cache=None):
         self.config = config
         self.history_manager = history_manager
+        self.price_cache = price_cache
         self._shutdown = False
         self._symbols: list[str] = []
         self._timeframes: list[str] = config.get("data", {}).get("timeframes", ["15m", "1h", "4h"])
@@ -176,13 +177,19 @@ class RealtimeScanner:
         self._cache.update(kline.symbol, kline.timeframe, candle)
         self._last_scan_time[f"{kline.symbol}_{kline.timeframe}"] = datetime.now()
 
+    def _on_trade(self, symbol: str, price: float, volume: float, timestamp: datetime):
+        if self.price_cache:
+            self.price_cache.update(symbol, price, volume, timestamp)
+
     async def _setup_websocket(self):
-        self._ws = OKXWebSocketManager(on_kline=self._on_kline)
+        self._ws = OKXWebSocketManager(on_kline=self._on_kline, on_trade=self._on_trade)
         await self._ws.connect()
         for symbol in self._symbols:
             for tf in self._timeframes:
                 self._ws.subscribe(symbol, tf)
-        logger.info(f"WebSocket subscribed to {len(self._symbols)} symbols x {len(self._timeframes)} timeframes")
+            if self.price_cache:
+                self._ws.subscribe_trades(symbol)
+        logger.info(f"WebSocket subscribed: {len(self._symbols)} symbols x {len(self._timeframes)} candles + trades")
 
     async def start_and_wait_first_scan(self, symbols: list[str]):
         self._symbols = symbols
@@ -241,8 +248,7 @@ class RealtimeScanner:
         alerts = []
         for symbol in self._symbols:
             for tf in self._timeframes:
-                candles = self._cache.get_all(symbol, tf)
-                candles = self._drop_incomplete(candles, tf)
+                candles = self._cache.get_closed(symbol, tf)
                 if len(candles) < 30:
                     continue
                 df = self._candles_to_df(candles)
@@ -296,12 +302,6 @@ class RealtimeScanner:
                 lines.append(self._fmt_alert(a))
 
         self._feishu_client.send_message("\n".join(lines))
-
-    def _drop_incomplete(self, candles: list[CandleData], timeframe: str) -> list[CandleData]:
-        now = datetime.now()
-        secs = {"15m": 900, "1h": 3600, "4h": 14400}.get(timeframe, 900)
-        complete = [c for c in candles if (now - c.timestamp).total_seconds() > secs * 0.9]
-        return complete if complete else candles
 
     def _candles_to_df(self, candles: list[CandleData]) -> pd.DataFrame:
         data = [{

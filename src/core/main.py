@@ -25,10 +25,12 @@ async def run_realtime(settings):
     from src.data.exchange import OKXAdapter
     from src.core.position_monitor import PositionMonitor
     from src.data.history_db import HistoryDB, HistoryManager
+    from src.data.price_cache import PriceCache
     hist_db = HistoryDB("data/history.db")
     hist_db.init_schema()
     hist_manager = HistoryManager(hist_db, default_lookback=90)
-    scanner = RealtimeScanner(settings.model_dump(), history_manager=hist_manager)
+    price_cache = PriceCache(max_age_seconds=60)
+    scanner = RealtimeScanner(settings.model_dump(), history_manager=hist_manager, price_cache=price_cache)
     adapter = OKXAdapter()
     symbols = adapter.get_symbol_list(settings.data.top_n)
 

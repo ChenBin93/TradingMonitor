@@ -40,6 +40,7 @@ class WebSocketManager:
         self,
         url: str,
         on_kline: Callable[[KlineData], None] | None = None,
+        on_trade: Callable[[str, float, float, datetime], None] | None = None,
         on_connect: Callable[[], None] | None = None,
         on_disconnect: Callable[[], None] | None = None,
         reconnect_delay: int = 5,
@@ -48,6 +49,7 @@ class WebSocketManager:
     ):
         self.url = url
         self.on_kline = on_kline
+        self.on_trade = on_trade
         self.on_connect = on_connect
         self.on_disconnect = on_disconnect
         self.reconnect_delay = reconnect_delay
@@ -59,6 +61,8 @@ class WebSocketManager:
         self._reconnect_count = 0
         self._subscriptions: set[tuple[str, str]] = set()
         self._pending_subscriptions: list[tuple[str, str]] = []
+        self._trade_subscriptions: set[str] = set()
+        self._pending_trade_subscriptions: list[str] = []
         self._lock = threading.RLock()
 
     async def connect(self):
@@ -85,10 +89,21 @@ class WebSocketManager:
         with self._lock:
             self._subscriptions.discard((symbol, timeframe))
 
+    def subscribe_trades(self, symbol: str):
+        with self._lock:
+            self._trade_subscriptions.add(symbol)
+            if symbol not in self._pending_trade_subscriptions:
+                self._pending_trade_subscriptions.append(symbol)
+
     async def _resubscribe_loop(self):
         while self._running:
             await asyncio.sleep(1)
             with self._lock:
+                if self._pending_trade_subscriptions and self._ws:
+                    batch = self._pending_trade_subscriptions[:20]
+                    self._pending_trade_subscriptions = self._pending_trade_subscriptions[20:]
+                    for sym in batch:
+                        await self._send_trade_subscription(sym)
                 if self._pending_subscriptions and self._ws:
                     batch = self._pending_subscriptions[:10]
                     self._pending_subscriptions = self._pending_subscriptions[10:]
@@ -97,11 +112,10 @@ class WebSocketManager:
 
     async def _send_subscription(self, symbol: str, timeframe: str):
         inst_id = self._format_inst_id(symbol)
-        # OKX channel: 15m/5m/30m (lowercase m), 1H/4H/1D (uppercase H/D)
         if timeframe.endswith("h") or timeframe.endswith("H"):
-            tf_okx = timeframe.upper()  # 1h→1H, 4h→4H
+            tf_okx = timeframe.upper()
         else:
-            tf_okx = timeframe.lower()  # 15m→15m
+            tf_okx = timeframe.lower()
         sub = {
             "op": "subscribe",
             "args": [{"instId": inst_id, "channel": f"candle{tf_okx}"}],
@@ -110,6 +124,16 @@ class WebSocketManager:
             await self._ws.send(json.dumps(sub))
             logger.debug(f"Subscribed: {symbol} candle{tf_okx}")
 
+    async def _send_trade_subscription(self, symbol: str):
+        inst_id = self._format_inst_id(symbol)
+        sub = {
+            "op": "subscribe",
+            "args": [{"instId": inst_id, "channel": "trades"}],
+        }
+        if self._ws:
+            await self._ws.send(json.dumps(sub))
+            logger.debug(f"Subscribed: {symbol} trades")
+
     async def _read_loop(self):
         while self._running and self._ws:
             try:
@@ -117,7 +141,6 @@ class WebSocketManager:
                 data = json.loads(msg)
                 if data.get("event") == "error":
                     logger.warning(f"WS error: {data.get('msg', '')}")
-                await self._handle_message(data)
                 await self._handle_message(data)
             except asyncio.TimeoutError:
                 continue
@@ -136,13 +159,29 @@ class WebSocketManager:
             logger.warning(f"WS error: {data.get('msg', '')}")
             return
         arg = data.get("arg", {})
-        if arg.get("channel", "").startswith("candle"):
+        channel = arg.get("channel", "")
+
+        if channel == "trades":
+            await self._handle_trade(arg.get("instId", ""), data.get("data", []))
+            return
+
+        if channel.startswith("candle"):
             symbol = self._parse_symbol(arg.get("instId", ""))
-            tf = arg.get("channel", "").replace("candle", "").lower()  # 1H→1h
+            tf = channel.replace("candle", "").lower()
             for candle_data in data.get("data", []):
                 kline = KlineData.from_ws_data(symbol, tf, candle_data)
                 if self.on_kline:
                     self.on_kline(kline)
+
+    async def _handle_trade(self, inst_id: str, trades: list):
+        if not trades or not self.on_trade:
+            return
+        for trade in trades:
+            symbol = self._parse_symbol(inst_id)
+            price = float(trade[1])
+            volume = float(trade[2])
+            ts = datetime.fromtimestamp(int(trade[4]) / 1000)
+            self.on_trade(symbol, price, volume, ts)
 
     async def _handle_disconnect(self):
         if self.on_disconnect:
