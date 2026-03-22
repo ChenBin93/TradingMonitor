@@ -211,44 +211,6 @@ class HistoryStatsComputer:
 
         vol_perc_long = self._percentiles(volatility.tolist(), pct_cuts)
 
-        vol_mean_short = float(np.mean(volatility[-self.windows["short"]:])) if len(volatility) >= self.windows["short"] else 0.0
-        vol_mean_medium = float(np.mean(volatility[-self.windows["medium"]:])) if len(volatility) >= self.windows["medium"] else 0.0
-
-        vol_mean_current = volatility[-1] if len(volatility) > 0 else 0.0
-        vol_mean_current_short = np.mean(volatility[-self.windows["short"]:]) if len(volatility) >= self.windows["short"] else vol_mean_current
-        vol_mean_current_medium = np.mean(volatility[-self.windows["medium"]:]) if len(volatility) >= self.windows["medium"] else vol_mean_current
-
-        vol_pct_short = float(np.sum(volatility[-self.windows["short"]:] > vol_mean_current_short) / self.windows["short"]) if len(volatility) >= self.windows["short"] else 0.5
-        vol_pct_medium = float(np.sum(volatility[-self.windows["medium"]:] > vol_mean_current_medium) / self.windows["medium"]) if len(volatility) >= self.windows["medium"] else 0.5
-
-        vol_pct_long = float(np.sum(volatility > vol_mean_current) / len(volatility)) if len(volatility) > 0 else 0.5
-
-        vol_pct_short = max(0.0, min(1.0, vol_pct_short))
-        vol_pct_medium = max(0.0, min(1.0, vol_pct_medium))
-        vol_pct_long = max(0.0, min(1.0, vol_pct_long))
-
-        vol_curr = float(volatility[-1]) if len(volatility) > 0 else 0.0
-        vol_p5 = vol_percents.get(5, 0.0)
-        vol_p95 = vol_percents.get(95, 1.0)
-        vol_range = vol_p95 - vol_p5 if vol_p95 > vol_p5 else 1.0
-        vol_pct_long = max(0.0, min(1.0, (vol_curr - vol_p5) / vol_range)) if vol_range > 0 else 0.5
-
-        vol_p5_short = vol_perc_short.get(5, 0.0)
-        vol_p95_short = vol_perc_short.get(95, 1.0)
-        vol_range_s = vol_p95_short - vol_p5_short if vol_p95_short > vol_p5_short else 1.0
-        vol_pct_short = max(0.0, min(1.0, (vol_mean_current_short - vol_p5_short) / vol_range_s)) if vol_range_s > 0 else 0.5
-
-        vol_p5_medium = vol_perc_medium.get(5, 0.0)
-        vol_p95_medium = vol_perc_medium.get(95, 1.0)
-        vol_range_m = vol_p95_medium - vol_p5_medium if vol_p95_medium > vol_p5_medium else 1.0
-        vol_pct_medium = max(0.0, min(1.0, (vol_mean_current_medium - vol_p5_medium) / vol_range_m)) if vol_range_m > 0 else 0.5
-
-        vol_percents["current_rank"] = round(vol_pct_long, 4)
-        vol_perc_short["current_rank"] = round(vol_pct_short, 4)
-        vol_perc_medium["current_rank"] = round(vol_pct_medium, 4)
-
-        vol_summary["atr_current"] = vol_curr
-
         volatility_stats = {
             "percentiles": vol_percents,
             "percentiles_short": vol_perc_short,
@@ -263,14 +225,7 @@ class HistoryStatsComputer:
             "summary": self._summary_stats(volumes.tolist()),
             "volume_short_mean": float(np.mean(volumes[-self.windows["short"]:])) if len(volumes) >= self.windows["short"] else 0.0,
             "volume_medium_mean": float(np.mean(volumes[-self.windows["medium"]:])) if len(volumes) >= self.windows["medium"] else 0.0,
-            "volume_current": float(volumes[-1]) if len(volumes) > 0 else 0.0,
         }
-
-        vol_s_p5 = volatility_stats["percentiles_short"].get(5, 0.0)
-        vol_s_p95 = volatility_stats["percentiles_short"].get(95, 1.0)
-        vol_s_range = vol_s_p95 - vol_s_p5 if vol_s_p95 > vol_s_p5 else 1.0
-        volume_current_rank = max(0.0, min(1.0, (float(volumes[-1]) - vol_s_p5) / vol_s_range)) if vol_s_range > 0 and len(volumes) > 0 else 0.5
-        volume_stats["percentiles"]["current_rank"] = round(volume_current_rank, 4)
 
         return {
             "symbol": symbol,
