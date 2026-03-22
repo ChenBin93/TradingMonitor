@@ -2,6 +2,7 @@
 configs/secrets.yaml
 .env
 *.env
+gittoken*
 
 # Logs
 logs/
