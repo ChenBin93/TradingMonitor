@@ -21,6 +21,7 @@ class Position:
     pnl_pct: float
     pnl_abs: float
     inst_id: str
+    open_time: datetime | None = None
 
 
 @dataclass
@@ -51,6 +52,7 @@ class PositionMonitor:
         self._testnet = self._creds.get("testnet", False)
         self._active = bool(self._creds.get("api_key"))
         self._silence_seconds = 600
+        self._max_position_hours = config.get("position_alert", {}).get("max_position_hours", 4)
 
     def _init_feishu(self) -> Optional[FeishuClient]:
         cfg = self.config.get("feishu_position", {})
@@ -131,10 +133,21 @@ class PositionMonitor:
                 notional = abs(pos_sz) * avg_px
                 pnl_abs = (last_px - avg_px) * abs(pos_sz) * mult
                 sym = self._symbol_from_inst(inst_id)
+                open_time = None
+                ts_str = pos.get("openMaxPos", "") or pos.get("openTime", "")
+                if ts_str:
+                    try:
+                        if len(ts_str) == 13:
+                            open_time = datetime.fromtimestamp(int(ts_str) / 1000)
+                        else:
+                            open_time = datetime.strptime(ts_str, "%Y-%m-%dT%H:%M:%S.%fZ")
+                    except Exception:
+                        pass
                 positions.append(Position(
                     symbol=sym, side=side, size=abs(pos_sz),
                     entry_price=avg_px, current_price=last_px,
                     pnl_pct=pnl_pct, pnl_abs=pnl_abs, inst_id=inst_id,
+                    open_time=open_time,
                 ))
             return positions
         except Exception:
@@ -204,6 +217,18 @@ class PositionMonitor:
                         pnl_pct=pnl, pnl_abs=pos.pnl_abs,
                     ))
                     self._set_alerted(profit_key)
+            if pos.open_time:
+                age_hours = (datetime.now() - pos.open_time).total_seconds() / 3600
+                if age_hours >= self._max_position_hours:
+                    age_key = f"age_{inst_id}"
+                    if not self._is_silent(age_key):
+                        sig_summary = self._summarize_signals(pos.symbol)
+                        alerts.append(PositionAlert(
+                            kind="position_age", symbol=pos.symbol, side=pos.side,
+                            details=f"持仓过久 {age_hours:.1f}h | {pos.entry_price:.4f} → {pos.current_price:.4f}{sig_summary}",
+                            pnl_pct=pnl, pnl_abs=pos.pnl_abs,
+                        ))
+                        self._set_alerted(age_key)
 
         for inst_id, pos in prev_map.items():
             if inst_id not in current_map:
@@ -224,6 +249,7 @@ class PositionMonitor:
                 "new_position": "🟢 新仓", "closed_position": "🔴 平仓",
                 "pnl_loss": "⚠️ 浮亏", "pnl_profit": "🎯 浮盈",
                 "signal_match": "📡 持仓信号",
+                "position_age": "⏰ 持仓过久",
             }.get(a.kind, a.kind)
             lines.append(f"\n{tag} {a.symbol} ({a.side})")
             lines.append(f"  {a.details}")
