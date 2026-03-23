@@ -243,15 +243,16 @@ class PositionMonitor:
         if not alerts or not self._feishu:
             return
         now = datetime.now().strftime("%H:%M")
-        lines = [f"💼 持仓提醒 [{now}]"]
+        lines = [f"[持仓提醒] {now}"]
         for a in alerts:
             tag = {
-                "new_position": "🟢 新仓", "closed_position": "🔴 平仓",
-                "pnl_loss": "⚠️ 浮亏", "pnl_profit": "🎯 浮盈",
-                "signal_match": "📡 持仓信号",
-                "position_age": "⏰ 持仓过久",
+                "new_position": "新仓", "closed_position": "平仓",
+                "pnl_loss": "浮亏", "pnl_profit": "浮盈",
+                "signal_match": "持仓信号",
+                "position_age": "持仓过久",
             }.get(a.kind, a.kind)
-            lines.append(f"\n{tag} {a.symbol} ({a.side})")
+            side_text = "做多" if a.side == "long" else "做空"
+            lines.append(f"\n{tag} {a.symbol} ({side_text})")
             lines.append(f"  {a.details}")
             if a.pnl_abs != 0:
                 lines.append(f"  PnL: {a.pnl_pct:+.1f}% ({a.pnl_abs:+.2f}U)")

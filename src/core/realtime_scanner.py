@@ -442,17 +442,17 @@ class RealtimeScanner:
         logger.info(f"Filter: {len(alerts)} alerts -> {len(to_push)} to_push")
 
         time_str = scan_time.strftime("%Y-%m-%d %H:%M")
-        lines = [f"📊 OKX实时监控 [{time_str}]"]
+        lines = [f"[信号预警] {time_str}"]
 
         critical = [a for a in to_push if a.severity == "critical"]
         high = [a for a in to_push if a.severity == "high"]
 
         if critical:
-            lines.append(f"\n🔴 强烈信号 ({len(critical)}):")
+            lines.append(f"\n【强烈信号】({len(critical)}个)")
             for a in critical:
                 lines.append(self._fmt_alert(a))
         if high:
-            lines.append(f"\n🟠 准备信号 ({len(high)}):")
+            lines.append(f"\n【准备信号】({len(high)}个)")
             for a in high:
                 lines.append(self._fmt_alert(a))
 
@@ -475,25 +475,27 @@ class RealtimeScanner:
             return
 
         time_str = scan_time.strftime("%Y-%m-%d %H:%M")
-        lines = [f"\n🏆 TOP5 标的推荐 [{time_str}]"]
+        lines = [f"\n[TOP5推荐] {time_str}"]
 
         if trending:
-            lines.append("\n📈 趋势市场 TOP5:")
+            lines.append("\n【趋势市场】TOP5:")
             for i, r in enumerate(trending, 1):
-                dir_icon = "🟢" if r.direction == "long" else "🔴"
-                sig_tags = "/".join([self._get_signal_tag(s) for s in r.signal_types[:2]])
-                bar = self._score_bar(r.score)
-                lines.append(f"{i}. {self._fmt_symbol(r.symbol)} {dir_icon} {r.score:.0%} {bar}")
-                lines.append(f"   信号:{sig_tags} | 置信:{r.confidence:.0%}")
+                dir_text = "做多" if r.direction == "long" else "做空"
+                sig_tags = "/".join([self._get_signal_tag(s) for s in r.signal_types[:3]])
+                reason = self._get_ranking_reason(r)
+                lines.append(f"{i}. {self._fmt_symbol(r.symbol)} {dir_text} {r.score:.0%}")
+                lines.append(f"   理由:{reason}")
+                lines.append(f"   信号:{sig_tags} 置信:{r.confidence:.0%}")
 
         if consolidating:
-            lines.append("\n📊 震荡市场 TOP5:")
+            lines.append("\n【震荡市场】TOP5:")
             for i, r in enumerate(consolidating, 1):
-                dir_icon = "🟢" if r.direction == "long" else "🔴"
-                sig_tags = "/".join([self._get_signal_tag(s) for s in r.signal_types[:2]])
-                bar = self._score_bar(r.score)
-                lines.append(f"{i}. {self._fmt_symbol(r.symbol)} {dir_icon} {r.score:.0%} {bar}")
-                lines.append(f"   信号:{sig_tags} | 置信:{r.confidence:.0%}")
+                dir_text = "做多" if r.direction == "long" else "做空"
+                sig_tags = "/".join([self._get_signal_tag(s) for s in r.signal_types[:3]])
+                reason = self._get_ranking_reason(r)
+                lines.append(f"{i}. {self._fmt_symbol(r.symbol)} {dir_text} {r.score:.0%}")
+                lines.append(f"   理由:{reason}")
+                lines.append(f"   信号:{sig_tags} 置信:{r.confidence:.0%}")
 
         self._feishu_client.send_message("\n".join(lines))
         logger.info(f"Ranking sent: {len(trending)} trending, {len(consolidating)} consolidating")
@@ -518,6 +520,20 @@ class RealtimeScanner:
     def _score_bar(self, score: float) -> str:
         filled = int(score * 10)
         return "█" * filled + "░" * (10 - filled)
+
+    def _get_ranking_reason(self, r) -> str:
+        parts = []
+        if r.momentum_score > 0.6:
+            parts.append("动量强")
+        if r.compression_score > 0.6:
+            parts.append("蓄力中")
+        if r.volume_score > 0.6:
+            parts.append("量能足")
+        if r.confidence > 0.8:
+            parts.append("信号强")
+        if len(r.signal_types) >= 2:
+            parts.append("多信号")
+        return "/".join(parts) if parts else "综合评估"
 
     def _candles_to_df(self, candles: list[CandleData]) -> pd.DataFrame:
         data = [{
@@ -816,8 +832,7 @@ class RealtimeScanner:
         conf = a.confidence
         d = a.details or {}
 
-        dir_icon = "🟢" if a.direction == "long" else "🔴" if a.direction == "short" else "⚪"
-        dir_text = "多头" if a.direction == "long" else "空头" if a.direction == "short" else "中性"
+        dir_text = "做多" if a.direction == "long" else "做空" if a.direction == "short" else "观望"
         regime_text = "趋势" if a.regime == "trend" else "震荡"
 
         sig_name = self._get_signal_name(a.signal_type)
@@ -826,8 +841,8 @@ class RealtimeScanner:
         hist_bar = self._get_histogram(a)
 
         lines = [
-            f"{sym}[{a.timeframe}] {dir_icon}{dir_text} {sig_name}",
-            f"━━━━━━━━━━━━━━━━━━━━",
+            f"{sym}[{a.timeframe}] {dir_text} {sig_name}",
+            f"------------------",
             f"方向: {dir_text} | 状态: {regime_text}市场",
             f"信号: {evidence}",
             f"历史: {hist_bar}",
