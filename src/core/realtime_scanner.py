@@ -122,6 +122,7 @@ class AlertFilter:
 @dataclass
 class SymbolRanking:
     symbol: str
+    timeframe: str
     direction: str
     regime: str
     score: float
@@ -156,10 +157,12 @@ class SymbolRanker:
 
         for alert in alerts:
             sym = alert.symbol
+            tf = alert.timeframe
             if sym not in symbol_scores:
                 symbol_scores[sym] = {
                     "direction": alert.direction,
                     "regime": alert.regime,
+                    "timeframe": tf,
                     "signals": [],
                     "max_confidence": 0,
                     "max_severity": "low",
@@ -175,6 +178,7 @@ class SymbolRanker:
             severity_order = {"critical": 3, "high": 2, "medium": 1, "low": 0}
             if severity_order.get(alert.severity, 0) > severity_order.get(score["max_severity"], 0):
                 score["max_severity"] = alert.severity
+                score["timeframe"] = tf
             ind_data = ind_data_map.get(sym, {})
             self._update_dimension_scores(score, alert, ind_data)
 
@@ -186,6 +190,7 @@ class SymbolRanker:
             rankings.append(
                 SymbolRanking(
                     symbol=sym,
+                    timeframe=score.get("timeframe", "15m"),
                     direction=score["direction"],
                     regime=score["regime"],
                     score=total,
@@ -507,7 +512,7 @@ class RealtimeScanner:
                 dir_text = "做多" if r.direction == "long" else "做空"
                 sig_tags = "/".join([self._get_signal_tag(s) for s in r.signal_types[:3]])
                 reason = self._get_ranking_reason(r)
-                lines.append(f"{i}. {self._fmt_symbol(r.symbol)} {dir_text} {r.score:.0%}")
+                lines.append(f"{i}. {self._fmt_symbol(r.symbol)}[{r.timeframe}] {dir_text} {r.score:.0%}")
                 lines.append(f"   理由:{reason}")
                 lines.append(f"   信号:{sig_tags} 置信:{r.confidence:.0%}")
 
@@ -517,7 +522,7 @@ class RealtimeScanner:
                 dir_text = "做多" if r.direction == "long" else "做空"
                 sig_tags = "/".join([self._get_signal_tag(s) for s in r.signal_types[:3]])
                 reason = self._get_ranking_reason(r)
-                lines.append(f"{i}. {self._fmt_symbol(r.symbol)} {dir_text} {r.score:.0%}")
+                lines.append(f"{i}. {self._fmt_symbol(r.symbol)}[{r.timeframe}] {dir_text} {r.score:.0%}")
                 lines.append(f"   理由:{reason}")
                 lines.append(f"   信号:{sig_tags} 置信:{r.confidence:.0%}")
 
