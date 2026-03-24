@@ -435,7 +435,11 @@ class RealtimeScanner:
             elapsed = (datetime.now() - self._last_report_time).total_seconds()
             if elapsed < 30:
                 return
-        to_push, _ = self._filter.filter(alerts)
+        
+        # Deduplicate: keep only highest confidence per symbol/timeframe/direction
+        deduped = self._deduplicate_alerts(alerts)
+        to_push, _ = self._filter.filter(deduped)
+        
         if not to_push:
             return
         self._last_report_time = datetime.now()
@@ -457,6 +461,26 @@ class RealtimeScanner:
                 lines.append(self._fmt_alert(a))
 
         self._feishu_client.send_message("\n".join(lines))
+
+    def _deduplicate_alerts(self, alerts: list) -> list:
+        """Remove conflicting signals: keep highest confidence per symbol/timeframe."""
+        grouped = {}
+        for a in alerts:
+            key = f"{a.symbol}_{a.timeframe}"
+            if key not in grouped:
+                grouped[key] = []
+            grouped[key].append(a)
+        
+        result = []
+        for key, group in grouped.items():
+            if len(group) == 1:
+                result.append(group[0])
+            else:
+                # Multiple alerts for same symbol/timeframe
+                # Keep only the one with highest confidence
+                best = max(group, key=lambda x: x.confidence)
+                result.append(best)
+        return result
 
     def _send_ranking_report(self, scan_time: datetime, alerts: list, ind_data_map: dict):
         if not self._feishu_client:

@@ -134,11 +134,21 @@ class PositionMonitor:
                 pnl_abs = (last_px - avg_px) * abs(pos_sz) * mult
                 sym = self._symbol_from_inst(inst_id)
                 open_time = None
-                ts_str = pos.get("openMaxPos", "") or pos.get("openTime", "")
+                # Try multiple field names for open time
+                ts_str = (
+                    pos.get("openMaxPos") or 
+                    pos.get("openTime") or 
+                    pos.get("openTime") or
+                    pos.get("ts") or
+                    ""
+                )
                 if ts_str:
                     try:
+                        ts_str = str(ts_str)
                         if len(ts_str) == 13:
                             open_time = datetime.fromtimestamp(int(ts_str) / 1000)
+                        elif len(ts_str) == 10:
+                            open_time = datetime.fromtimestamp(int(ts_str))
                         else:
                             open_time = datetime.strptime(ts_str, "%Y-%m-%dT%H:%M:%S.%fZ")
                     except Exception:
@@ -219,6 +229,7 @@ class PositionMonitor:
                     self._set_alerted(profit_key)
             if pos.open_time:
                 age_hours = (datetime.now() - pos.open_time).total_seconds() / 3600
+                logger.info(f"[PosMonitor] Position {inst_id} age: {age_hours:.2f}h, max: {self._max_position_hours}h")
                 if age_hours >= self._max_position_hours:
                     age_key = f"age_{inst_id}"
                     if not self._is_silent(age_key):
