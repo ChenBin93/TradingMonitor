@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional
 
+from loguru import logger
 from src.notification.feishu import FeishuClient
 
 
@@ -134,10 +135,9 @@ class PositionMonitor:
                 pnl_abs = (last_px - avg_px) * abs(pos_sz) * mult
                 sym = self._symbol_from_inst(inst_id)
                 open_time = None
-                # Try multiple field names for open time
                 ts_str = (
+                    pos.get("cTime") or 
                     pos.get("openMaxPos") or 
-                    pos.get("openTime") or 
                     pos.get("openTime") or
                     pos.get("ts") or
                     ""
