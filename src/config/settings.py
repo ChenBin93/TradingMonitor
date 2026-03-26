@@ -98,6 +98,9 @@ class PositionAlertConfig(BaseModel):
     pnl_profit_pct: float = 10.0
     signal_match: bool = True
     interval_seconds: int = 60
+    max_position_hours: int = 4
+    auto_exit_enabled: bool = True
+    auto_exit_initial_sl_pct: float = 3.0
 
 
 class DatabaseConfig(BaseModel):

@@ -59,6 +59,9 @@ position_alert:
   pnl_profit_pct: 10.0
   signal_match: true
   interval_seconds: 60
+  max_position_hours: 4
+  auto_exit_enabled: true
+  auto_exit_initial_sl_pct: 3.0
 
 okx_credentials:
   api_key: ''

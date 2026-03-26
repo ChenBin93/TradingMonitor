@@ -23,6 +23,10 @@ class Position:
     pnl_abs: float
     inst_id: str
     open_time: datetime | None = None
+    initial_stop_loss_pct: float = 0.0
+    current_stop_loss_pct: float = 0.0
+    exit_stage: int = 0
+    peak_price: float = 0.0
 
 
 @dataclass
@@ -54,6 +58,8 @@ class PositionMonitor:
         self._active = bool(self._creds.get("api_key"))
         self._silence_seconds = 600
         self._max_position_hours = config.get("position_alert", {}).get("max_position_hours", 4)
+        self._auto_exit_enabled = config.get("position_alert", {}).get("auto_exit_enabled", False)
+        self._auto_exit_initial_sl = config.get("position_alert", {}).get("auto_exit_initial_sl_pct", 3.0)
 
     def _init_feishu(self) -> Optional[FeishuClient]:
         cfg = self.config.get("feishu_position", {})
@@ -158,6 +164,9 @@ class PositionMonitor:
                     entry_price=avg_px, current_price=last_px,
                     pnl_pct=pnl_pct, pnl_abs=pnl_abs, inst_id=inst_id,
                     open_time=open_time,
+                    initial_stop_loss_pct=self._auto_exit_initial_sl,
+                    current_stop_loss_pct=self._auto_exit_initial_sl,
+                    peak_price=last_px,
                 ))
             return positions
         except Exception:
@@ -194,6 +203,115 @@ class PositionMonitor:
                     tags.append(f"{tag}({e.severity[0].upper()})")
                 parts.append(f"{tf}: {'·'.join(tags)}")
         return " | " + " | ".join(parts)
+
+    def _check_auto_exit(self, pos: Position, prev_pos: Position | None) -> list[PositionAlert]:
+        alerts = []
+        if pos.exit_stage >= 4:
+            return alerts
+        
+        entry = pos.entry_price
+        current = pos.current_price
+        is_long = pos.side == "long"
+        
+        if is_long:
+            profit_pct = (current - entry) / entry * 100
+            stop_distance = entry * (pos.current_stop_loss_pct / 100)
+            high_since_open = max(pos.peak_price, current)
+            pos.peak_price = high_since_open
+            distance_from_high = high_since_open - current
+        else:
+            profit_pct = (entry - current) / entry * 100
+            stop_distance = entry * (pos.current_stop_loss_pct / 100)
+            low_since_open = min(pos.peak_price, current)
+            pos.peak_price = low_since_open
+            distance_from_high = current - low_since_open
+        
+        initial_sl_distance = entry * (pos.initial_stop_loss_pct / 100)
+        
+        if pos.exit_stage == 0:
+            if profit_pct >= pos.initial_stop_loss_pct:
+                pos.current_stop_loss_pct = 0
+                pos.exit_stage = 1
+                alerts.append(PositionAlert(
+                    kind="auto_exit", symbol=pos.symbol, side=pos.side,
+                    details=f"[保本] 盈利已达到1:1，止损移至开仓价",
+                    pnl_pct=profit_pct, pnl_abs=pos.pnl_abs,
+                ))
+                return alerts
+        
+        if pos.exit_stage >= 1:
+            prev_candle = self._get_prev_candle(pos.symbol)
+            if prev_candle:
+                if is_long:
+                    if current < prev_candle["low"]:
+                        exit_pct = 30
+                        pos.exit_stage = 2
+                        alerts.append(PositionAlert(
+                            kind="auto_exit", symbol=pos.symbol, side=pos.side,
+                            details=f"[自动止盈30%] 价格跌破前低，当前盈利{profit_pct:.1f}%",
+                            pnl_pct=profit_pct, pnl_abs=pos.pnl_abs,
+                        ))
+                else:
+                    if current > prev_candle["high"]:
+                        exit_pct = 30
+                        pos.exit_stage = 2
+                        alerts.append(PositionAlert(
+                            kind="auto_exit", symbol=pos.symbol, side=pos.side,
+                            details=f"[自动止盈30%] 价格突破前高，当前盈利{profit_pct:.1f}%",
+                            pnl_pct=profit_pct, pnl_abs=pos.pnl_abs,
+                        ))
+        
+        if pos.exit_stage >= 2:
+            total_distance = initial_sl_distance * 1
+            remaining_distance = total_distance * 0.3
+            if is_long:
+                exit_price = entry + remaining_distance
+                if current <= exit_price:
+                    pos.exit_stage = 3
+                    alerts.append(PositionAlert(
+                        kind="auto_exit", symbol=pos.symbol, side=pos.side,
+                        details=f"[自动止盈30%] 价格回落至距离开仓30%，当前盈利{profit_pct:.1f}%",
+                        pnl_pct=profit_pct, pnl_abs=pos.pnl_abs,
+                    ))
+            else:
+                exit_price = entry - remaining_distance
+                if current >= exit_price:
+                    pos.exit_stage = 3
+                    alerts.append(PositionAlert(
+                        kind="auto_exit", symbol=pos.symbol, side=pos.side,
+                        details=f"[自动止盈30%] 价格回升至距离开仓30%，当前盈利{profit_pct:.1f}%",
+                        pnl_pct=profit_pct, pnl_abs=pos.pnl_abs,
+                    ))
+        
+        if pos.exit_stage >= 3:
+            if is_long:
+                if current <= entry:
+                    pos.exit_stage = 4
+                    alerts.append(PositionAlert(
+                        kind="auto_exit", symbol=pos.symbol, side=pos.side,
+                        details=f"[最后保护] 价格回到开仓价，自动平仓剩余40%",
+                        pnl_pct=profit_pct, pnl_abs=pos.pnl_abs,
+                    ))
+            else:
+                if current >= entry:
+                    pos.exit_stage = 4
+                    alerts.append(PositionAlert(
+                        kind="auto_exit", symbol=pos.symbol, side=pos.side,
+                        details=f"[最后保护] 价格回到开仓价，自动平仓剩余40%",
+                        pnl_pct=profit_pct, pnl_abs=pos.pnl_abs,
+                    ))
+        
+        return alerts
+
+    def _get_prev_candle(self, symbol: str) -> dict | None:
+        from src.data.cache import CacheManager
+        cache = CacheManager(max_candles=500)
+        inst_id = f"{symbol.replace('/USDT', '')}-USDT-SWAP"
+        candles = cache.get_closed(inst_id, "15m")
+        if len(candles) >= 2:
+            c = candles[-2]
+            return {"high": c.high, "low": c.low, "close": c.close}
+        return None
 
     def _detect_changes(self, current: list[Position]) -> list[PositionAlert]:
         alerts = []
@@ -240,6 +358,10 @@ class PositionMonitor:
                             pnl_pct=pnl, pnl_abs=pos.pnl_abs,
                         ))
                         self._set_alerted(age_key)
+            
+            if self._auto_exit_enabled:
+                exit_alerts = self._check_auto_exit(pos, prev_map.get(inst_id))
+                alerts.extend(exit_alerts)
 
         for inst_id, pos in prev_map.items():
             if inst_id not in current_map:
@@ -261,6 +383,7 @@ class PositionMonitor:
                 "pnl_loss": "浮亏", "pnl_profit": "浮盈",
                 "signal_match": "持仓信号",
                 "position_age": "持仓过久",
+                "auto_exit": "自动止盈",
             }.get(a.kind, a.kind)
             side_text = "做多" if a.side == "long" else "做空"
             lines.append(f"\n{tag} {a.symbol} ({side_text})")
